@@ -144,9 +144,9 @@ class EntityImporter {
 
 	/**
 	 * @param string[] $ids
-	 * @param bool $importStatements
+	 * @param bool $importStatements When true, copy statements of these ids after their references exist as stubs.
 	 */
-	public function importEntities( array $ids, $importStatements = true ) {
+	public function importEntities( array $ids, $importStatements = false ) {
 		$pending = [];
 		foreach ( $ids as $id ) {
 			$id = trim( (string)$id );
@@ -184,8 +184,10 @@ class EntityImporter {
 			}
 
 			foreach ( $entities as $entity ) {
-				$stashedEntities[] = $entity->copy();
-				$this->importStub( $entity );
+				if ( $importStatements ) {
+					$stashedEntities[] = $entity->copy();
+				}
+				$this->importStub( $entity, $importStatements );
 			}
 		}
 
@@ -227,8 +229,9 @@ class EntityImporter {
 
 	/**
 	 * @param EntityDocument $entity
+	 * @param bool $importStatements
 	 */
-	private function importStub( EntityDocument $entity ) {
+	private function importStub( EntityDocument $entity, $importStatements ) {
 		$sourceId = $entity->getId();
 		if ( $sourceId === null ) {
 			$this->logger->error( 'Source entity has no id' );
@@ -269,7 +272,8 @@ class EntityImporter {
 			$label,
 			$droppedTerms,
 			$sitelinkCount,
-			$statementCount
+			$statementCount,
+			$importStatements
 		);
 
 		if ( $this->dryRun ) {
@@ -425,6 +429,7 @@ class EntityImporter {
 	 * @param int $droppedTerms
 	 * @param int $sitelinkCount
 	 * @param int $statementCount
+	 * @param bool $importStatements
 	 * @return string
 	 */
 	private function describe(
@@ -433,7 +438,8 @@ class EntityImporter {
 		$label,
 		$droppedTerms,
 		$sitelinkCount,
-		$statementCount
+		$statementCount,
+		$importStatements
 	) {
 		$labels = 0;
 		$descriptions = 0;
@@ -454,9 +460,16 @@ class EntityImporter {
 		}
 
 		$quoted = $label === '' ? '' : ' "' . $label . '"';
+		if ( $importStatements ) {
+			$statements = (string)$statementCount;
+		} elseif ( $statementCount > 0 ) {
+			$statements = '0 (source ' . $statementCount . ' not imported)';
+		} else {
+			$statements = '0';
+		}
 
 		return sprintf(
-			'%s %s%s labels=%d descriptions=%d aliases=%d droppedTerms=%d statements=%d sitelinks=%s',
+			'%s %s%s labels=%d descriptions=%d aliases=%d droppedTerms=%d statements=%s sitelinks=%s',
 			$entity->getType(),
 			$serialization,
 			$quoted,
@@ -464,7 +477,7 @@ class EntityImporter {
 			$descriptions,
 			$aliases,
 			$droppedTerms,
-			$statementCount,
+			$statements,
 			$sitelinks
 		);
 	}

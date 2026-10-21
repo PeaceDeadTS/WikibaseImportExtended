@@ -1,6 +1,6 @@
 {
 	"name": "WikibaseImportExtended",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"author": [
 		"Katie Filbert",
 		"PeaceDeadTS"
@@ -52,8 +52,12 @@
 			"value": false,
 			"description": "Keep source sitelinks. Leave false unless those site ids exist in the local sites table."
 		},
+		"WBImportStatements": {
+			"value": false,
+			"description": "Copy statements of requested entities. Leave false to import labels, descriptions and aliases only. Override with --statements."
+		},
 		"WBImportUserAgent": {
-			"value": "WikibaseImportExtended/0.2 (https://pornbasedata.com)",
+			"value": "WikibaseImportExtended/0.3 (https://pornbasedata.com)",
 			"description": "HTTP User-Agent sent to the source API and SPARQL endpoint."
 		}
 	},

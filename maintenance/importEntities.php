@@ -27,7 +27,7 @@ class ImportEntities extends Maintenance {
 		parent::__construct();
 
 		$this->addDescription(
-			'Import entities from another Wikibase (Wikidata by default), including labels, descriptions, aliases and statements.'
+			'Import entities from another Wikibase (Wikidata by default). Labels, descriptions and aliases are copied. Statements are copied only with --statements.'
 		);
 		$this->addOption( 'file', 'File with one source entity id per line', false, true );
 		$this->addOption( 'entity', 'Source entity id to import, for example Q64', false, true );
@@ -35,9 +35,10 @@ class ImportEntities extends Maintenance {
 		$this->addOption( 'range', 'Inclusive item id range, for example Q1:Q20', false, true );
 		$this->addOption( 'stdin', 'Read source entity ids from standard input, one per line' );
 		$this->addOption( 'all-properties', 'Import every property from the source wiki' );
-		$this->addOption( 'dry-run', 'Fetch and print the plan. Does not create entities or mapping rows.' );
+		$this->addOption( 'dry-run', 'Fetch and print the plan, including the user that would own the edits. Does not create entities or mapping rows.' );
+		$this->addOption( 'statements', 'Also copy statements of the requested entities. Without this flag only labels, descriptions and aliases are imported.' );
 		$this->addOption( 'sitelinks', 'Keep source sitelinks. They are dropped unless this flag or $wgWBImportSitelinks is set.' );
-		$this->addOption( 'user', 'Existing local account that owns the edits. Default is $wgWBImportUser.', false, true );
+		$this->addOption( 'user', 'Existing local account that owns the edits. Checked in dry-run too. Default is $wgWBImportUser.', false, true );
 		$this->requireExtension( 'WikibaseImportExtended' );
 	}
 
@@ -60,6 +61,7 @@ class ImportEntities extends Maintenance {
 		}
 
 		$importSitelinks = $this->hasOption( 'sitelinks' ) || (bool)$config->get( 'WBImportSitelinks' );
+		$importStatements = $this->hasOption( 'statements' ) || (bool)$config->get( 'WBImportStatements' );
 		$db = $services->getConnectionProvider()->getPrimaryDatabase();
 		$mappingReady = $db->tableExists( 'wbs_entity_mapping', __METHOD__ );
 
@@ -77,15 +79,22 @@ class ImportEntities extends Maintenance {
 			}
 		}
 
-		$user = null;
+		$user = $this->resolveUser( (string)$this->getOption( 'user', $config->get( 'WBImportUser' ) ) );
+		$this->assertUserCanImport( $user );
 		$botFlag = 0;
-		if ( !$dryRun ) {
-			$user = $this->resolveUser( (string)$this->getOption( 'user', $config->get( 'WBImportUser' ) ) );
-			$this->assertUserCanImport( $user );
-			if ( $services->getPermissionManager()->userHasRight( $user, 'bot' ) ) {
-				$botFlag = EDIT_FORCE_BOT;
-			}
-			$this->output( 'Importing as ' . $user->getName() . "\n" );
+		if ( $services->getPermissionManager()->userHasRight( $user, 'bot' ) ) {
+			$botFlag = EDIT_FORCE_BOT;
+		}
+		$botNote = $botFlag ? ' (bot)' : '';
+		if ( $dryRun ) {
+			$this->output( 'Would import as ' . $user->getName() . $botNote . "\n" );
+		} else {
+			$this->output( 'Importing as ' . $user->getName() . $botNote . "\n" );
+		}
+		if ( $importStatements ) {
+			$this->output( "Statements will be copied for the requested entities.\n" );
+		} else {
+			$this->output( "Statements are not imported. Pass --statements to copy them.\n" );
 		}
 
 		$http = new SourceHttp( $services->getHttpRequestFactory(), (string)$config->get( 'WBImportUserAgent' ) );
@@ -136,7 +145,7 @@ class ImportEntities extends Maintenance {
 		) )->newEntityImporter();
 
 		try {
-			$importer->importEntities( $ids );
+			$importer->importEntities( $ids, $importStatements );
 		} catch ( \Throwable $ex ) {
 			$logger->error( $ex->getMessage() );
 			$this->fatalError( $ex->getMessage() . "\n" );
