@@ -22,7 +22,9 @@ Load it after WikibaseRepository. Then create the mapping table:
 php maintenance/update.php --quick
 ```
 
-The account passed with `--user` (default `$wgWBImportUser`, `WikibaseImport`) must already exist and be allowed to edit, create pages and create properties. Dry-run uses the same check and prints `Would import as …`. If the account is missing or lacks a right, the script stops before it fetches entities.
+The account passed with `--user` (default `$wgWBImportUser`, `WikibaseImport`) must already exist and be allowed to edit, create pages and create properties. An empty `$wgWBImportUser` falls back to `WikibaseImport`. Dry-run uses the same check and prints `Would import as …`. If the account is missing or lacks a right, the script stops before it fetches entities.
+
+Special:WikibaseImport is the same check, then import, for one entity. Check runs a dry-run and shows what would be copied and which account would own the edits. Import is shown only when that check has no errors. The form can name a different local account. The right `wikibaseimport` is granted to the groups in `$wgWBImportGroups` (default `sysop` and `bureaucrat`). Those groups also get a link in the left navigation. The page is listed on Special:SpecialPages.
 
 Usage
 -----
@@ -53,7 +55,8 @@ Configuration
 * `$wgWBImportSourceApi` — source `api.php` (default Wikidata)
 * `$wgWBImportQueryUrl` — SPARQL endpoint for `--query`
 * `$wgWBImportSourcePropertyNamespace` — property namespace on the source wiki (Wikidata: 120)
-* `$wgWBImportUser` — local user used when `--user` is omitted
+* `$wgWBImportUser` — local user used when `--user` and the web form leave the name empty. An empty value means `WikibaseImport`
+* `$wgWBImportGroups` — groups that receive the `wikibaseimport` right (default `sysop` and `bureaucrat`). Set the array in LocalSettings to replace the list
 * `$wgWBImportSitelinks` — keep sitelinks (default false)
 * `$wgWBImportStatements` — copy statements of requested entities (default false). The `--statements` flag does the same for one run.
 * `$wgWBImportUserAgent` — HTTP User-Agent sent to the source

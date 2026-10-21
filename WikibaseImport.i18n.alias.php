@@ -1,13 +1,20 @@
 <?php
 /**
- * Aliases for special pages of the WikibaseImport extension
+ * Aliases for Special:WikibaseImport.
  *
  * @file
  * @ingroup Extensions
  */
 // @codingStandardsIgnoreFile
 
-$specialPageAliases = array();
+$specialPageAliases = [];
 
 /** English (English) */
-$specialPageAliases['en'] = array();
+$specialPageAliases['en'] = [
+	'WikibaseImport' => [ 'WikibaseImport', 'ImportEntities' ],
+];
+
+/** Russian (Русский) */
+$specialPageAliases['ru'] = [
+	'WikibaseImport' => [ 'ИмпортВикибазы', 'ИмпортСущностей' ],
+];

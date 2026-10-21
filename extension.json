@@ -1,6 +1,6 @@
 {
 	"name": "WikibaseImportExtended",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"author": [
 		"Katie Filbert",
 		"PeaceDeadTS"
@@ -19,8 +19,79 @@
 	"AutoloadNamespaces": {
 		"Wikibase\\Import\\": "src/"
 	},
+	"callback": "Wikibase\\Import\\Hooks::onRegistration",
+	"AvailableRights": [
+		"wikibaseimport"
+	],
+	"SpecialPages": {
+		"WikibaseImport": "Wikibase\\Import\\Special\\SpecialWikibaseImport"
+	},
+	"APIModules": {
+		"wikibaseimport": "Wikibase\\Import\\Api\\ApiWikibaseImport"
+	},
 	"Hooks": {
-		"LoadExtensionSchemaUpdates": "Wikibase\\Import\\Hooks::onLoadExtensionSchemaUpdates"
+		"LoadExtensionSchemaUpdates": "Wikibase\\Import\\Hooks::onLoadExtensionSchemaUpdates",
+		"SidebarBeforeOutput": "Wikibase\\Import\\Hooks::onSidebarBeforeOutput"
+	},
+	"ResourceFileModulePaths": {
+		"localBasePath": "resources",
+		"remoteExtPath": "WikibaseImportExtended/resources"
+	},
+	"ResourceModules": {
+		"ext.wikibaseimport.styles": {
+			"class": "MediaWiki\\ResourceLoader\\CodexModule",
+			"codexStyleOnly": true,
+			"codexComponents": [
+				"CdxButton",
+				"CdxCheckbox",
+				"CdxField",
+				"CdxLabel",
+				"CdxMessage",
+				"CdxProgressBar",
+				"CdxTable",
+				"CdxTextInput"
+			]
+		},
+		"ext.wikibaseimport": {
+			"scripts": [
+				"ext.wikibaseimport.js"
+			],
+			"styles": [
+				"ext.wikibaseimport.css"
+			],
+			"dependencies": [
+				"mediawiki.api"
+			],
+			"messages": [
+				"wikibaseimport-check-ok",
+				"wikibaseimport-check-warn",
+				"wikibaseimport-check-error",
+				"wikibaseimport-import-ok",
+				"wikibaseimport-import-warn",
+				"wikibaseimport-import-error",
+				"wikibaseimport-bot-flag",
+				"wikibaseimport-mode-statements",
+				"wikibaseimport-mode-terms",
+				"wikibaseimport-log",
+				"wikibaseimport-col-id",
+				"wikibaseimport-col-label",
+				"wikibaseimport-col-action",
+				"wikibaseimport-col-terms",
+				"wikibaseimport-col-statements",
+				"wikibaseimport-col-sitelinks",
+				"wikibaseimport-col-local",
+				"wikibaseimport-action-create",
+				"wikibaseimport-action-exists",
+				"wikibaseimport-action-created",
+				"wikibaseimport-action-statements",
+				"wikibaseimport-statements-plan",
+				"wikibaseimport-empty-entity",
+				"wikibaseimport-request-failed",
+				"wikibaseimport-stale",
+				"wikibaseimport-pending-check",
+				"wikibaseimport-pending-import"
+			]
+		}
 	},
 	"config": {
 		"WBImportSourceApi": {
@@ -46,7 +117,12 @@
 		},
 		"WBImportUser": {
 			"value": "WikibaseImport",
-			"description": "Existing local user that owns imported revisions. Override with --user."
+			"description": "Existing local user that owns imported revisions when --user and the web form leave the name empty. An empty value falls back to WikibaseImport."
+		},
+		"WBImportGroups": {
+			"value": [ "sysop", "bureaucrat" ],
+			"merge_strategy": "provide_default",
+			"description": "User groups that receive the wikibaseimport right when the extension loads. Set this in LocalSettings to replace the list. The group * is ignored."
 		},
 		"WBImportSitelinks": {
 			"value": false,

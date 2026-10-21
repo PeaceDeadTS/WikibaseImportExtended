@@ -1,0 +1,74 @@
+.wbimport-form,
+.wbimport-result,
+.wbimport-pending {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	max-width: 52rem;
+}
+
+.wbimport-intro {
+	max-width: 52rem;
+}
+
+.wbimport-form .cdx-text-input {
+	min-width: 0;
+	max-width: 100%;
+}
+
+.wbimport-options {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.wbimport-option__description {
+	margin-top: 4px;
+	padding-bottom: 0;
+	padding-left: calc(1.25rem + 8px);
+}
+
+.wbimport-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.wbimport-actions .cdx-button[hidden],
+.wbimport-pending[hidden] {
+	display: none;
+}
+
+.wbimport-pending-text {
+	margin: 0;
+}
+
+.wbimport-result:empty {
+	display: none;
+}
+
+.wbimport-log {
+	margin: 0;
+	max-height: 24rem;
+	overflow: auto;
+	border: 1px solid var(--border-color-subtle, #c8ccd1);
+	border-radius: 2px;
+	background-color: var(--background-color-neutral-subtle, #f8f9fa);
+	padding: 8px 12px;
+	font-family: monospace;
+	font-size: 0.8125rem;
+	line-height: 1.45;
+}
+
+.wbimport-log__line {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.wbimport-log__line--error {
+	color: var(--color-error, #bf3c2c);
+}
+
+.wbimport-log__line--warning {
+	color: var(--color-warning, #ab7b00);
+}
