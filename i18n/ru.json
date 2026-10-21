@@ -29,6 +29,10 @@
 	"wikibaseimport-bot-flag": " (бот)",
 	"wikibaseimport-mode-statements": "Утверждения запрошенных сущностей будут скопированы.",
 	"wikibaseimport-mode-terms": "Копируются только названия, описания и псевдонимы.",
+	"wikibaseimport-related-count": "Связанных сущностей в этом запуске: $1. Это свойства и элементы, на которые ссылаются утверждения.",
+	"wikibaseimport-mode-mismatch": "Импорт заблокирован: сервер получил не те значения галочек. Копировать утверждения: на форме $2, на сервере $1. Оставить ссылки на сайты: на форме $4, на сервере $3.",
+	"wikibaseimport-on": "включено",
+	"wikibaseimport-off": "выключено",
 	"wikibaseimport-col-id": "Источник",
 	"wikibaseimport-col-label": "Название",
 	"wikibaseimport-col-action": "Действие",
@@ -50,7 +54,7 @@
 	"apihelp-wikibaseimport-param-step": "check выполняет dry-run и ничего не пишет. import создаёт сущности.",
 	"apihelp-wikibaseimport-param-entity": "Id сущности источника, например Q64.",
 	"apihelp-wikibaseimport-param-user": "Локальная учётная запись, которой принадлежат правки. Пустое значение берёт настройку WBImportUser, а если она пустая — WikibaseImport.",
-	"apihelp-wikibaseimport-param-statements": "Копировать утверждения запрошенной сущности.",
-	"apihelp-wikibaseimport-param-sitelinks": "Оставить сителинки источника.",
+	"apihelp-wikibaseimport-param-statements": "1 копирует утверждения запрошенной сущности и создаёт свойства и элементы, на которые они ссылаются. 0 копирует только названия, описания и псевдонимы.",
+	"apihelp-wikibaseimport-param-sitelinks": "1 оставляет сителинки источника. 0 отбрасывает их.",
 	"apihelp-wikibaseimport-example": "Dry-run Q64 от имени PBDBot, включая утверждения."
 }

@@ -29,6 +29,10 @@
 	"wikibaseimport-bot-flag": " (bot)",
 	"wikibaseimport-mode-statements": "Statements of the requested entities will be copied.",
 	"wikibaseimport-mode-terms": "Only labels, descriptions and aliases will be copied.",
+	"wikibaseimport-related-count": "Related entities in this run: $1. They are properties and items used by the copied statements.",
+	"wikibaseimport-mode-mismatch": "Import is blocked. The server did not receive the checkbox values. Copy statements: form $2, server $1. Keep sitelinks: form $4, server $3.",
+	"wikibaseimport-on": "on",
+	"wikibaseimport-off": "off",
 	"wikibaseimport-col-id": "Source",
 	"wikibaseimport-col-label": "Label",
 	"wikibaseimport-col-action": "Action",
@@ -50,7 +54,7 @@
 	"apihelp-wikibaseimport-param-step": "\"check\" runs a dry-run and saves nothing. \"import\" writes entities.",
 	"apihelp-wikibaseimport-param-entity": "Source entity id, for example Q64.",
 	"apihelp-wikibaseimport-param-user": "Local account that owns the edits. Empty uses the WBImportUser setting, or WikibaseImport when that setting is empty.",
-	"apihelp-wikibaseimport-param-statements": "Copy statements of the requested entity.",
-	"apihelp-wikibaseimport-param-sitelinks": "Keep source sitelinks.",
+	"apihelp-wikibaseimport-param-statements": "1 copies statements of the requested entity and creates the properties and items they point at. 0 copies labels, descriptions and aliases only.",
+	"apihelp-wikibaseimport-param-sitelinks": "1 keeps source sitelinks. 0 drops them.",
 	"apihelp-wikibaseimport-example": "Dry-run Q64 as PBDBot, including statements."
 }

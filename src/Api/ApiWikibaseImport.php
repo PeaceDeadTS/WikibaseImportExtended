@@ -37,18 +37,21 @@ class ApiWikibaseImport extends ApiBase {
 
 		$config = $this->getConfig();
 		$userName = ImportUserResolver::resolveUserName( $params['user'], $config->get( 'WBImportUser' ) );
+		// Exact "1" only. A boolean cast would treat the strings "false" and "on" as true.
+		$statementsParam = (string)$params['statements'];
+		$sitelinksParam = (string)$params['sitelinks'];
 		$job = new ImportJob(
 			'entity',
 			$entity,
 			$userName,
 			$params['step'] === 'check',
-			(bool)$params['statements'],
-			(bool)$params['sitelinks']
+			$statementsParam === '1',
+			$sitelinksParam === '1'
 		);
 		$run = ( new ImportRunner() )->run( $job, new BufferLogger(), static function ( $line ) {
 		} );
 
-		$this->addPayload( $this->present( $run, $userName ) );
+		$this->addPayload( $this->present( $run, $userName, $statementsParam, $sitelinksParam ) );
 	}
 
 	/**
@@ -65,6 +68,8 @@ class ApiWikibaseImport extends ApiBase {
 			'bot' => false,
 			'statements' => false,
 			'sitelinks' => false,
+			'statementsparam' => '0',
+			'sitelinksparam' => '0',
 			'sourcecount' => 0,
 			'haswarning' => false,
 			'log' => [],
@@ -75,10 +80,17 @@ class ApiWikibaseImport extends ApiBase {
 	/**
 	 * @param \Wikibase\Import\ImportRunResult $run
 	 * @param string $requestedUser
+	 * @param string $statementsParam Raw "0" or "1" from the request.
+	 * @param string $sitelinksParam Raw "0" or "1" from the request.
 	 * @return array<string,mixed>
 	 */
-	private function present( $run, $requestedUser ) {
-		$log = [];
+	private function present( $run, $requestedUser, $statementsParam, $sitelinksParam ) {
+		$log = [
+			[
+				'level' => 'output',
+				'message' => 'Parameters: statements=' . $statementsParam . ' sitelinks=' . $sitelinksParam,
+			],
+		];
 		foreach ( $run->lines as $line ) {
 			$log[] = [
 				'level' => $line['level'],
@@ -118,6 +130,8 @@ class ApiWikibaseImport extends ApiBase {
 			'bot' => $run->bot,
 			'statements' => $run->statements,
 			'sitelinks' => $run->sitelinks,
+			'statementsparam' => $statementsParam,
+			'sitelinksparam' => $sitelinksParam,
 			'sourcecount' => $run->sourceCount,
 			'haswarning' => $run->hasWarning,
 			'log' => $log,
@@ -202,13 +216,13 @@ class ApiWikibaseImport extends ApiBase {
 				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-user',
 			],
 			'statements' => [
-				ParamValidator::PARAM_TYPE => 'boolean',
-				ParamValidator::PARAM_DEFAULT => false,
+				ParamValidator::PARAM_TYPE => [ '0', '1' ],
+				ParamValidator::PARAM_DEFAULT => '0',
 				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-statements',
 			],
 			'sitelinks' => [
-				ParamValidator::PARAM_TYPE => 'boolean',
-				ParamValidator::PARAM_DEFAULT => false,
+				ParamValidator::PARAM_TYPE => [ '0', '1' ],
+				ParamValidator::PARAM_DEFAULT => '0',
 				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-sitelinks',
 			],
 		];

@@ -1,6 +1,6 @@
 {
 	"name": "WikibaseImportExtended",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"author": [
 		"Katie Filbert",
 		"PeaceDeadTS"
@@ -72,6 +72,10 @@
 				"wikibaseimport-bot-flag",
 				"wikibaseimport-mode-statements",
 				"wikibaseimport-mode-terms",
+				"wikibaseimport-related-count",
+				"wikibaseimport-mode-mismatch",
+				"wikibaseimport-on",
+				"wikibaseimport-off",
 				"wikibaseimport-log",
 				"wikibaseimport-col-id",
 				"wikibaseimport-col-label",

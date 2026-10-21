@@ -84,6 +84,22 @@
 		return box;
 	}
 
+	function serverOn( data, paramName, boolName ) {
+		if ( data[ paramName ] === '1' ) {
+			return true;
+		}
+		return data[ boolName ] === true;
+	}
+
+	function flagsMatch( data ) {
+		return serverOn( data, 'statementsparam', 'statements' ) === statementsInput.checked &&
+			serverOn( data, 'sitelinksparam', 'sitelinks' ) === sitelinksInput.checked;
+	}
+
+	function onOff( on ) {
+		return mw.msg( on ? 'wikibaseimport-on' : 'wikibaseimport-off' );
+	}
+
 	function userText( data ) {
 		var name = data.user || '';
 		if ( data.bot ) {
@@ -201,7 +217,17 @@
 		result.textContent = '';
 		var type = 'error';
 		var summary;
-		if ( data.ok && data.haswarning ) {
+		var mismatch = step === 'check' && !!data.ok && !flagsMatch( data );
+		if ( mismatch ) {
+			type = 'error';
+			summary = mw.msg(
+				'wikibaseimport-mode-mismatch',
+				onOff( serverOn( data, 'statementsparam', 'statements' ) ),
+				onOff( statementsInput.checked ),
+				onOff( serverOn( data, 'sitelinksparam', 'sitelinks' ) ),
+				onOff( sitelinksInput.checked )
+			);
+		} else if ( data.ok && data.haswarning ) {
 			type = 'warning';
 			summary = mw.msg(
 				step === 'import' ? 'wikibaseimport-import-warn' : 'wikibaseimport-check-warn',
@@ -224,8 +250,13 @@
 		var lines = String( summary ).split( '\n' ).filter( function ( line ) {
 			return line !== '';
 		} );
-		if ( data.ok || data.sourcecount ) {
-			lines.push( mw.msg( data.statements ? 'wikibaseimport-mode-statements' : 'wikibaseimport-mode-terms' ) );
+		if ( !mismatch && ( data.ok || data.sourcecount ) ) {
+			var copyStatements = serverOn( data, 'statementsparam', 'statements' );
+			lines.push( mw.msg( copyStatements ? 'wikibaseimport-mode-statements' : 'wikibaseimport-mode-terms' ) );
+			var related = ( data.entities ? data.entities.length : 0 ) - ( data.sourcecount || 0 );
+			if ( copyStatements && related > 0 ) {
+				lines.push( mw.msg( 'wikibaseimport-related-count', related ) );
+			}
 		}
 		result.appendChild( messageBox( type, lines ) );
 		if ( data.entities && data.entities.length ) {
@@ -234,7 +265,7 @@
 		if ( data.log && data.log.length ) {
 			result.appendChild( buildLog( data.log ) );
 		}
-		if ( step === 'check' && data.ok ) {
+		if ( step === 'check' && data.ok && !mismatch ) {
 			checkedKey = requestKey();
 			showImport();
 		} else {
@@ -260,8 +291,8 @@
 			step: step,
 			entity: normalizeEntity( entityInput.value ),
 			user: userInput.value.trim(),
-			statements: statementsInput.checked ? 1 : 0,
-			sitelinks: sitelinksInput.checked ? 1 : 0
+			statements: statementsInput.checked ? '1' : '0',
+			sitelinks: sitelinksInput.checked ? '1' : '0'
 		} );
 	}
 
