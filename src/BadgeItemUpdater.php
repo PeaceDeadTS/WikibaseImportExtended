@@ -41,8 +41,11 @@ class BadgeItemUpdater {
 	private function replaceBadgeItemsInSiteLink( SiteLink $siteLink ) {
 		$newBadges = array();
 
-		foreach( $siteLink->getBadges() as $badge ) {
-			$newBadges[] = $this->entityMappingStore->getLocalId( $badge );
+		foreach ( $siteLink->getBadges() as $badge ) {
+			$localId = $this->entityMappingStore->getLocalId( $badge );
+			if ( $localId instanceof ItemId ) {
+				$newBadges[] = $localId;
+			}
 		}
 
 		return new SiteLink(

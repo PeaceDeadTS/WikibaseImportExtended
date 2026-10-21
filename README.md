@@ -1,71 +1,56 @@
-WikibaseImport
-===============
+WikibaseImportExtended
+=======================
 
-[![Build Status](https://travis-ci.org/filbertkm/WikibaseImport.svg?branch=master)](https://travis-ci.org/filbertkm/WikibaseImport)
+Maintenance script that copies entities from another Wikibase (by default Wikidata) into the local repository. Labels, descriptions and aliases are copied. Statements are copied after referenced properties and items have been created, and those references are remapped to the new local ids.
 
-WikibaseImport is a MediaWiki extension that provides a maintenance script for importing entities from another Wikibase instance. (e.. Wikidata)
+Source ids are not reused. `Q64` on Wikidata becomes a new local id. The pair is stored in `wbs_entity_mapping`.
 
-The script imports the specified entity or entities, including statements, sitelinks, labels, descriptions and aliases. The extension tracks the newly assigned entity id and the original id, so that any other entity that references can be linked appropriately.
-
-The script also imports any referenced entities (e.g. properties, badge items, wikibase-item values) without the statements.
+Sitelinks are dropped unless `--sitelinks` is passed. A repository that does not list the source wiki's sites in its sites table cannot save those links.
 
 Install
-------
+-------
 
-Clone ```https://github.com/filbertkm/WikibaseImport.git``` to the extensions folder of your MediaWiki instance.
+The directory name must be `WikibaseImportExtended`. No Composer install is required.
 
-Then go into the WikibaseImport extension directory and run ```composer update```.
-
-Then, to enable the extension, add it in your ```LocalSettings.php``` file:
-
-```
-wfLoadExtension( 'WikibaseImport' );
+```php
+wfLoadExtension( 'WikibaseImportExtended' );
 ```
 
-The extension requires a new database table to map entity ids from the foreign
-wiki to corresponding ids in the local wiki.
+Load it after WikibaseRepository. Then create the mapping table:
 
-To add the table, run MediaWiki's ```update.php``` maintenance script.
+```
+php maintenance/update.php --quick
+```
+
+The account passed with `--user` (default `$wgWBImportUser`, `WikibaseImport`) must already exist and be allowed to edit, create pages and create properties.
 
 Usage
-------
-First, navigate to *WikibaseImport* ’s extension folder.
+-----
 
-Import a specific entity:
-
-```
-php maintenance/importEntities.php --entity Q147
-```
-
-Import a list of entities from a text file:
+From the MediaWiki root:
 
 ```
-php maintenance/importEntities.php --file presidents.csv
+php maintenance/run.php WikibaseImportExtended:importEntities --entity Q64 --dry-run
+php maintenance/run.php WikibaseImportExtended:importEntities --entity Q64 --user WikibaseImport
+php maintenance/run.php WikibaseImportExtended:importEntities --file presidents.csv
+php maintenance/run.php WikibaseImportExtended:importEntities --all-properties
+php maintenance/run.php WikibaseImportExtended:importEntities --query P31:Q515
+php maintenance/run.php WikibaseImportExtended:importEntities --range Q1:Q20
+printf 'Q%s\n' 1 2 3 | php maintenance/run.php WikibaseImportExtended:importEntities --stdin
 ```
 
-You need to create the csv with a list of entity ids. For example, get a list
-of entity ids from a query (e.g. Wikidata sparql).
+`--dry-run` reads the source API and the mapping table and prints what would be created. It does not save entities and does not insert mapping rows.
 
-Import all properties:
+Only the requested entities receive statements. Entities they point at (properties, countries, values) are created with labels, descriptions and aliases only. Import those ids themselves when their statements are needed.
 
-```
-php maintenance/importEntities.php --all-properties
-```
+`--query` and `--range` can match a very large set. Try one `--entity` with `--dry-run` first.
 
-Import Wikidata entities with specified property:entityId value pair:
+Configuration
+-------------
 
-```
-php maintenance/importEntities.php --query P131:Q64
-```
-
-Import a range of entities:
-
-```
-php maintenance/importEntities.php --range Q1:Q20
-```
-
-Import a list of entities printed by another program:
-
-```
-printf 'Q%s\n' {1..20} {100..120} | php maintenance/importEntities.php --stdin
-```
+* `$wgWBImportSourceApi` — source `api.php` (default Wikidata)
+* `$wgWBImportQueryUrl` — SPARQL endpoint for `--query`
+* `$wgWBImportSourcePropertyNamespace` — property namespace on the source wiki (Wikidata: 120)
+* `$wgWBImportUser` — local user used when `--user` is omitted
+* `$wgWBImportSitelinks` — keep sitelinks (default false)
+* `$wgWBImportUserAgent` — HTTP User-Agent sent to the source

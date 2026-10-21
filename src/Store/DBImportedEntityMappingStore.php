@@ -2,25 +2,63 @@
 
 namespace Wikibase\Import\Store;
 
-use LoadBalancer;
 use Wikibase\DataModel\Entity\EntityId;
 use Wikibase\DataModel\Entity\EntityIdParser;
+use Wikimedia\Rdbms\IConnectionProvider;
 
 class DBImportedEntityMappingStore implements ImportedEntityMappingStore {
 
 	/**
-	 * @var LoadBalancer
+	 * @var IConnectionProvider
 	 */
-	private $loadBalancer;
+	private $dbProvider;
 
 	/**
 	 * @var EntityIdParser
 	 */
 	private $entityIdParser;
 
-	public function __construct( LoadBalancer $loadBalancer, EntityIdParser $entityIdParser ) {
-		$this->loadBalancer = $loadBalancer;
+	/**
+	 * @var bool
+	 */
+	private $dbEnabled;
+
+	/**
+	 * @var bool
+	 */
+	private $dryRun;
+
+	/**
+	 * @var array<string,EntityId|null>
+	 */
+	private $resolved = [];
+
+	/**
+	 * @var array<string,bool>
+	 */
+	private $persisted = [];
+
+	/**
+	 * @var array<string,EntityId>
+	 */
+	private $overlay = [];
+
+	/**
+	 * @param IConnectionProvider $dbProvider
+	 * @param EntityIdParser $entityIdParser
+	 * @param bool $dbEnabled False when the mapping table does not exist yet (dry-run only).
+	 * @param bool $dryRun When true, add() keeps the row in memory and does not write.
+	 */
+	public function __construct(
+		IConnectionProvider $dbProvider,
+		EntityIdParser $entityIdParser,
+		$dbEnabled,
+		$dryRun
+	) {
+		$this->dbProvider = $dbProvider;
 		$this->entityIdParser = $entityIdParser;
+		$this->dbEnabled = (bool)$dbEnabled;
+		$this->dryRun = (bool)$dryRun;
 	}
 
 	/**
@@ -28,64 +66,117 @@ class DBImportedEntityMappingStore implements ImportedEntityMappingStore {
 	 * @param EntityId $localId
 	 */
 	public function add( EntityId $originalId, EntityId $localId ) {
-		$dbw = $this->loadBalancer->getConnection( DB_MASTER );
+		$key = $originalId->getSerialization();
 
-		return $dbw->insert(
-			'wbs_entity_mapping',
-			array(
+		if ( $this->dryRun ) {
+			$this->overlay[$key] = $localId;
+			$this->resolved[$key] = $localId;
+			return;
+		}
+
+		$this->dbProvider->getPrimaryDatabase()->newInsertQueryBuilder()
+			->insertInto( 'wbs_entity_mapping' )
+			->row( [
 				'wbs_local_id' => $localId->getSerialization(),
-				'wbs_original_id' => $originalId->getSerialization()
-			),
-			__METHOD__
-		);
+				'wbs_original_id' => $key,
+			] )
+			->caller( __METHOD__ )
+			->execute();
+
+		$this->persisted[$key] = true;
+		$this->resolved[$key] = $localId;
 	}
 
 	/**
 	 * @param EntityId $originalId
-	 *
 	 * @return EntityId|null
 	 */
 	public function getLocalId( EntityId $originalId ) {
-		$dbw = $this->loadBalancer->getConnection( DB_MASTER );
-
-		$res = $dbw->selectRow(
-			'wbs_entity_mapping',
-			'wbs_local_id',
-			array(
-				'wbs_original_id' => $originalId->getSerialization()
-			),
-			__METHOD__
-		);
-
-		if ( $res !== false ) {
-			return $this->entityIdParser->parse( $res->wbs_local_id );
+		$key = $originalId->getSerialization();
+		if ( array_key_exists( $key, $this->resolved ) ) {
+			return $this->resolved[$key];
 		}
 
+		$fromDb = $this->fetchLocalId( $key );
+		if ( $fromDb !== null ) {
+			$this->persisted[$key] = true;
+			$this->resolved[$key] = $fromDb;
+			return $fromDb;
+		}
+
+		if ( !array_key_exists( $key, $this->persisted ) ) {
+			$this->persisted[$key] = false;
+		}
+
+		if ( isset( $this->overlay[$key] ) ) {
+			$this->resolved[$key] = $this->overlay[$key];
+			return $this->overlay[$key];
+		}
+
+		$this->resolved[$key] = null;
 		return null;
 	}
 
 	/**
-	 * @param EntityId $localId
+	 * True when the source id already has a row in the database.
+	 * Dry-run overlays are not persisted.
 	 *
+	 * @param EntityId $originalId
+	 * @return bool
+	 */
+	public function isPersisted( EntityId $originalId ) {
+		$key = $originalId->getSerialization();
+		if ( !array_key_exists( $key, $this->persisted ) ) {
+			$this->getLocalId( $originalId );
+		}
+
+		return !empty( $this->persisted[$key] );
+	}
+
+	/**
+	 * @param EntityId $localId
 	 * @return EntityId|null
 	 */
 	public function getOriginalId( EntityId $localId ) {
-		$dbw = $this->loadBalancer->getConnection( DB_MASTER );
-
-		$res = $dbw->selectRow(
-			'wbs_entity_mapping',
-			'wbs_original_id',
-			array(
-				'wbs_local_id' => $localId->getSerialization()
-			),
-			__METHOD__
-		);
-
-		if ( $res !== false ) {
-			return $this->entityIdParser->parse( $res->wbs_original_id );
+		if ( !$this->dbEnabled ) {
+			return null;
 		}
 
-		return null;
+		$row = $this->dbProvider->getPrimaryDatabase()->newSelectQueryBuilder()
+			->select( 'wbs_original_id' )
+			->from( 'wbs_entity_mapping' )
+			->where( [ 'wbs_local_id' => $localId->getSerialization() ] )
+			->caller( __METHOD__ )
+			->fetchRow();
+
+		if ( $row === false ) {
+			return null;
+		}
+
+		return $this->entityIdParser->parse( $row->wbs_original_id );
+	}
+
+	/**
+	 * @param string $originalSerialization
+	 * @return EntityId|null
+	 */
+	private function fetchLocalId( $originalSerialization ) {
+		if ( !$this->dbEnabled ) {
+			return null;
+		}
+
+		$row = $this->dbProvider->getPrimaryDatabase()->newSelectQueryBuilder()
+			->select( 'wbs_local_id' )
+			->from( 'wbs_entity_mapping' )
+			->where( [ 'wbs_original_id' => $originalSerialization ] )
+			->caller( __METHOD__ )
+			->fetchRow();
+
+		if ( $row === false ) {
+			return null;
+		}
+
+		return $this->entityIdParser->parse( $row->wbs_local_id );
 	}
 
 }

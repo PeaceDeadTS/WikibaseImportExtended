@@ -2,8 +2,6 @@
 
 namespace Wikibase\Import\Console;
 
-use Maintenance;
-
 class ImportOptions {
 
 	/**

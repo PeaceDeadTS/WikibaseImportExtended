@@ -2,75 +2,104 @@
 
 namespace Wikibase\Import;
 
-use Http;
-
 /**
- * @licence GNU GPL v2+
- * @author Katie Filbert < aude.wiki@gmail.com >
+ * Lists property ids from the source wiki via allpages.
  */
 class PropertyIdLister {
 
+	/**
+	 * @var SourceHttp
+	 */
+	private $http;
+
+	/**
+	 * @var int
+	 */
+	private $namespace;
+
+	/**
+	 * @var array|null
+	 */
 	private $continuation = null;
 
-	private $properties = array();
+	/**
+	 * @var string[]
+	 */
+	private $properties = [];
+
+	/**
+	 * @param SourceHttp $http
+	 * @param int $namespace Source property namespace. Wikidata uses 120.
+	 */
+	public function __construct( SourceHttp $http, $namespace ) {
+		$this->http = $http;
+		$this->namespace = (int)$namespace;
+	}
 
 	/**
 	 * @param string $apiUrl
-	 *
 	 * @return string[]
 	 */
 	public function fetch( $apiUrl ) {
-		do {
-			$res = $this->doRequest( $apiUrl );
+		$this->continuation = null;
+		$this->properties = [];
 
-			$this->extractContinuation( $res );
-			$this->extractProperties( $res );
+		do {
+			$response = $this->doRequest( $apiUrl );
+			$this->extractContinuation( $response );
+			$this->extractProperties( $response );
 		} while ( $this->continuation !== null );
 
 		return $this->properties;
 	}
 
+	/**
+	 * @param string $apiUrl
+	 * @return array
+	 */
 	private function doRequest( $apiUrl ) {
-		$params = array(
+		$params = [
 			'action' => 'query',
 			'list' => 'allpages',
-			'apnamespace' => 120,
-			'aplimit' => 300,
+			'apnamespace' => $this->namespace,
+			'aplimit' => 'max',
 			'format' => 'json',
-			'rawcontinue' => 1
-		);
+		];
 
-		if ( isset( $this->continuation ) && $this->continuation !== null ) {
-			$params['apfrom'] = $this->continuation;
+		if ( is_array( $this->continuation ) ) {
+			foreach ( $this->continuation as $key => $value ) {
+				$params[$key] = $value;
+			}
 		}
 
-		$json = Http::get(
-			wfAppendQuery( $apiUrl, $params ),
-			array(),
-			__METHOD__
-		);
-
-		return json_decode( $json, true );
+		return $this->http->getJson( $apiUrl, $params );
 	}
 
-	private function extractContinuation( array $res ) {
-		if ( !array_key_exists( 'query-continue', $res ) ) {
+	/**
+	 * @param array $response
+	 */
+	private function extractContinuation( array $response ) {
+		if ( !isset( $response['continue'] ) || !is_array( $response['continue'] ) ) {
 			$this->continuation = null;
-
 			return;
 		}
 
-		$this->continuation = $res['query-continue']['allpages']['apcontinue'];
+		$this->continuation = $response['continue'];
 	}
 
-	private function extractProperties( array $res ) {
-		if ( !array_key_exists( 'query', $res ) ) {
+	/**
+	 * @param array $response
+	 */
+	private function extractProperties( array $response ) {
+		if ( !isset( $response['query']['allpages'] ) || !is_array( $response['query']['allpages'] ) ) {
 			throw new \RuntimeException( 'query param not found in result' );
 		}
 
-		foreach( $res['query']['allpages'] as $page ) {
-			$parts = explode( ':', $page['title'] );
-			$this->properties[] = $parts[1];
+		foreach ( $response['query']['allpages'] as $page ) {
+			$title = $page['title'] ?? '';
+			if ( preg_match( '/(P\d+)$/', $title, $matches ) ) {
+				$this->properties[] = $matches[1];
+			}
 		}
 	}
 

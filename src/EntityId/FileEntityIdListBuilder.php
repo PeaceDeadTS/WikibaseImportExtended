@@ -27,7 +27,16 @@ class FileEntityIdListBuilder implements EntityIdListBuilder {
 			throw new RuntimeException( 'File is invalid' );
 		}
 
-		return array_map( 'trim', $rows );
+		$ids = [];
+		foreach ( $rows as $row ) {
+			$id = trim( $row );
+			if ( $id === '' || str_starts_with( $id, '#' ) ) {
+				continue;
+			}
+			$ids[] = $id;
+		}
+
+		return $ids;
 	}
 
 }

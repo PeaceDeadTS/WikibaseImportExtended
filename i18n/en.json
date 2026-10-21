@@ -1,6 +1,6 @@
 {
-    "@metadata": {
-        "authors": []
-    },
-    "wikibaseimport-desc": "Allows importing data from another Wikibase instance"
+	"@metadata": {
+		"authors": []
+	},
+	"wikibaseimport-desc": "Imports entities from another Wikibase, including labels, descriptions, aliases and statements"
 }

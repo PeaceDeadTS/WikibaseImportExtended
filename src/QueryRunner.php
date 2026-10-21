@@ -2,45 +2,78 @@
 
 namespace Wikibase\Import;
 
-use Asparagus\QueryBuilder;
-use Asparagus\QueryExecuter;
 use Wikibase\DataModel\Entity\EntityId;
 use Wikibase\DataModel\Entity\PropertyId;
 
 class QueryRunner {
 
-	private $queryBuilder;
-	private $queryExecuter;
+	/**
+	 * @var SourceHttp
+	 */
+	private $http;
 
-	public function __construct( QueryBuilder $queryBuilder, QueryExecuter $queryExecuter ) {
-		$this->queryBuilder = $queryBuilder;
-		$this->queryExecuter = $queryExecuter;
+	/**
+	 * @var string
+	 */
+	private $queryUrl;
+
+	/**
+	 * @var array
+	 */
+	private $prefixes;
+
+	/**
+	 * @param SourceHttp $http
+	 * @param string $queryUrl
+	 * @param array $prefixes
+	 */
+	public function __construct( SourceHttp $http, $queryUrl, array $prefixes ) {
+		$this->http = $http;
+		$this->queryUrl = $queryUrl;
+		$this->prefixes = $prefixes;
 	}
 
+	/**
+	 * @param PropertyId $propertyId
+	 * @param EntityId $valueId
+	 * @return string[]
+	 */
 	public function getPropertyEntityIdValueMatches( PropertyId $propertyId, EntityId $valueId ) {
-		$propertyText = $propertyId->getSerialization();
-		$valueText = $valueId->getSerialization();
+		$wd = $this->prefixes['wd'] ?? 'http://www.wikidata.org/entity/';
+		$wdt = $this->prefixes['wdt'] ?? 'http://www.wikidata.org/prop/direct/';
+		$property = $propertyId->getSerialization();
+		$value = $valueId->getSerialization();
 
-		$this->queryBuilder->select( '?id' )
-			->where( "?id", "wdt:$propertyText", "wd:$valueText" );
+		$sparql = "PREFIX wd: <$wd>\n"
+			. "PREFIX wdt: <$wdt>\n"
+			. "SELECT ?id WHERE { ?id wdt:$property wd:$value }";
 
-		$results = $this->queryExecuter->execute( $this->queryBuilder->getSPARQL() );
+		$results = $this->http->getJson( $this->queryUrl, [
+			'query' => $sparql,
+			'format' => 'json',
+		] );
 
-		if ( !is_array( $results ) ) {
+		$bindings = $results['results']['bindings'] ?? null;
+		if ( !is_array( $bindings ) ) {
 			throw new QueryException( 'Query execution failed.' );
 		}
 
-		return $this->parseResults( $results['bindings'] );
+		return $this->parseResults( $bindings, $wd );
 	}
 
-	private function parseResults( array $results ) {
-		$pattern = "/^http:\/\/www.wikidata.org\/entity\/([PQ]\d+)$/";
-		$ids = array();
+	/**
+	 * @param array $results
+	 * @param string $entityPrefix
+	 * @return string[]
+	 */
+	private function parseResults( array $results, $entityPrefix ) {
+		$prefix = preg_quote( $entityPrefix, '/' );
+		$pattern = '/^' . $prefix . '([A-Za-z]+\\d+)$/';
+		$ids = [];
 
 		foreach ( $results as $result ) {
-			preg_match( $pattern, $result['id']['value'], $matches );
-
-			if ( isset( $matches[1] ) ) {
+			$value = $result['id']['value'] ?? '';
+			if ( preg_match( $pattern, $value, $matches ) ) {
 				$ids[] = $matches[1];
 			}
 		}

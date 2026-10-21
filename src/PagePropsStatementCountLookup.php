@@ -2,46 +2,66 @@
 
 namespace Wikibase\Import;
 
-use LoadBalancer;
 use Wikibase\DataModel\Entity\EntityId;
+use Wikibase\Lib\Store\EntityNamespaceLookup;
+use Wikimedia\Rdbms\IConnectionProvider;
 
 class PagePropsStatementCountLookup implements StatementsCountLookup {
 
-	private $loadBalancer;
+	/**
+	 * @var IConnectionProvider
+	 */
+	private $dbProvider;
 
-	public function __construct( LoadBalancer $loadBalancer ) {
-		$this->loadBalancer = $loadBalancer;
+	/**
+	 * @var EntityNamespaceLookup
+	 */
+	private $namespaceLookup;
+
+	/**
+	 * @param IConnectionProvider $dbProvider
+	 * @param EntityNamespaceLookup $namespaceLookup
+	 */
+	public function __construct( IConnectionProvider $dbProvider, EntityNamespaceLookup $namespaceLookup ) {
+		$this->dbProvider = $dbProvider;
+		$this->namespaceLookup = $namespaceLookup;
 	}
 
+	/**
+	 * @param EntityId $entityId
+	 * @return int
+	 */
 	public function getStatementCount( EntityId $entityId ) {
-		$db = $this->loadBalancer->getConnection( DB_MASTER );
-
-		$res = $db->selectRow(
-			array( 'page_props', 'page' ),
-			array( 'pp_value' ),
-			array(
-				'page_namespace' => 0,
-				'page_title' => $entityId->getSerialization(),
-				'pp_propname' => 'wb-claims'
-			),
-			__METHOD__,
-			array(),
-			array( 'page' => array( 'LEFT JOIN', 'page_id=pp_page' ) )
-		);
-
-		$this->loadBalancer->closeConnection( $db );
-
-		if ( $res === false ) {
+		$namespace = $this->namespaceLookup->getEntityNamespace( $entityId->getEntityType() );
+		if ( $namespace === null ) {
 			return 0;
 		}
 
-		return (int)$res->pp_value;
+		$row = $this->dbProvider->getPrimaryDatabase()->newSelectQueryBuilder()
+			->select( 'pp_value' )
+			->from( 'page' )
+			->join( 'page_props', null, 'pp_page = page_id' )
+			->where( [
+				'page_namespace' => $namespace,
+				'page_title' => $entityId->getSerialization(),
+				'pp_propname' => 'wb-claims',
+			] )
+			->caller( __METHOD__ )
+			->fetchRow();
+
+		if ( $row === false || $row->pp_value === null ) {
+			return 0;
+		}
+
+		return (int)$row->pp_value;
 	}
 
+	/**
+	 * @param EntityId $entityId
+	 * @return bool
+	 */
 	public function hasStatements( EntityId $entityId ) {
-		$count = $this->getStatementCount( $entityId );
-
-		return $count > 0;
+		return $this->getStatementCount( $entityId ) > 0;
 	}
 
 }

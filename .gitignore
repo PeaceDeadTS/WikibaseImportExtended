@@ -2,3 +2,4 @@ composer.lock
 /vendor
 
 .phpcomplete_extended
+WikibaseImportExtended_DEV.md

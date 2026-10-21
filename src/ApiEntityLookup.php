@@ -3,15 +3,13 @@
 namespace Wikibase\Import;
 
 use Deserializers\DispatchingDeserializer;
-use Http;
 use Psr\Log\LoggerInterface;
 use Wikibase\DataModel\Entity\EntityDocument;
 use Wikibase\DataModel\Entity\EntityId;
 use Wikibase\DataModel\Services\Lookup\EntityLookup;
 
 /**
- * @licence GNU GPL v2+
- * @author Katie Filbert < aude.wiki@gmail.com >
+ * Loads entities from a remote Wikibase wbgetentities API.
  */
 class ApiEntityLookup implements EntityLookup {
 
@@ -26,6 +24,11 @@ class ApiEntityLookup implements EntityLookup {
 	private $logger;
 
 	/**
+	 * @var SourceHttp
+	 */
+	private $http;
+
+	/**
 	 * @var string
 	 */
 	private $apiUrl;
@@ -33,28 +36,29 @@ class ApiEntityLookup implements EntityLookup {
 	/**
 	 * @param DispatchingDeserializer $deserializer
 	 * @param LoggerInterface $logger
+	 * @param SourceHttp $http
 	 * @param string $apiUrl
 	 */
 	public function __construct(
 		DispatchingDeserializer $deserializer,
 		LoggerInterface $logger,
+		SourceHttp $http,
 		$apiUrl
 	) {
 		$this->deserializer = $deserializer;
 		$this->logger = $logger;
+		$this->http = $http;
 		$this->apiUrl = $apiUrl;
 	}
 
 	/**
 	 * @param EntityId $entityId
-	 *
-	 * @return EntityDocument
+	 * @return EntityDocument|null
 	 */
 	public function getEntity( EntityId $entityId ) {
-		$prefixedId = $entityId->getSerialization();
-		$entities = $this->getEntities( array( $prefixedId ) );
+		$entities = $this->getEntities( [ $entityId->getSerialization() ] );
 
-		foreach( $entities as $entity ) {
+		foreach ( $entities as $entity ) {
 			return $entity;
 		}
 
@@ -63,7 +67,6 @@ class ApiEntityLookup implements EntityLookup {
 
 	/**
 	 * @param EntityId $entityId
-	 *
 	 * @return bool
 	 */
 	public function hasEntity( EntityId $entityId ) {
@@ -72,58 +75,48 @@ class ApiEntityLookup implements EntityLookup {
 
 	/**
 	 * @param string[] $ids
-	 *
-	 * @throws RuntimeException
-	 * @return Entity[]
+	 * @return EntityDocument[] Map of source id serialization to entity
 	 */
 	public function getEntities( array $ids ) {
-		$data = $this->doRequest( $ids );
-
-		if ( $data && array_key_exists( 'success', $data ) ) {
-			unset( $data['success'] );
-			return $this->extractEntities( $data );
+		$ids = array_values( array_unique( array_filter( $ids, 'strlen' ) ) );
+		if ( $ids === [] ) {
+			return [];
 		}
 
-		 $this->logger->error( 'Api request failed' );
-
-		 return array();
-	}
-
-	private function doRequest( array $ids ) {
-		$params = array(
+		$data = $this->http->getJson( $this->apiUrl, [
 			'action' => 'wbgetentities',
 			'ids' => implode( '|', $ids ),
-			'format' => 'json'
-		);
+			'format' => 'json',
+			'formatversion' => '1',
+		] );
 
-		$json = Http::get(
-			wfAppendQuery( $this->apiUrl, $params ),
-			array(),
-			__METHOD__
-		);
-
-		$data = json_decode( $json, true );
-
-		if ( $data ) {
-			return $data;
+		$entities = [];
+		$serialized = $data['entities'] ?? [];
+		if ( !is_array( $serialized ) ) {
+			$this->logger->error( 'Source API returned no entities object' );
+			return [];
 		}
 
-		$this->logger->error( 'Failed to decode json api response' );
-	}
+		foreach ( $serialized as $entityId => $serialization ) {
+			if ( !is_array( $serialization ) || isset( $serialization['missing'] ) ) {
+				$this->logger->warning( "Source entity missing: $entityId" );
+				continue;
+			}
 
-	private function extractEntities( array $entries ) {
-		$entities = array();
+			if ( !$this->deserializer->isDeserializerFor( $serialization ) ) {
+				$type = $serialization['type'] ?? 'unknown';
+				$this->logger->warning( "Skipping $entityId: unsupported entity type $type" );
+				continue;
+			}
 
-		foreach( $entries as $entry ) {
-			foreach( $entry as $entityId => $serialization ) {
-				if ( array_key_exists( 'missing', $serialization ) ) {
-					continue;
-				} else if ( $this->deserializer->isDeserializerFor( $serialization ) ) {
-					$entities[$entityId] = $this->deserializer->deserialize( $serialization );
-				}
+			try {
+				$entities[$entityId] = $this->deserializer->deserialize( $serialization );
+			} catch ( \Throwable $ex ) {
+				$this->logger->error( "Failed to parse $entityId: " . $ex->getMessage() );
 			}
 		}
 
 		return $entities;
 	}
+
 }

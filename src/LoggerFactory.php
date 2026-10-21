@@ -4,16 +4,13 @@ namespace Wikibase\Import;
 
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
-use Monolog\Formatter\LineFormatter;
-use Monolog\Logger;
-use Monolog\Handler\NullHandler;
-use Monolog\Handler\StreamHandler;
+use Psr\Log\NullLogger;
 
 class LoggerFactory {
 
 	/**
+	 * @param string $loggerName
 	 * @param bool $quietMode
-	 *
 	 * @return LoggerInterface
 	 */
 	public static function newLogger( $loggerName, $quietMode ) {
@@ -25,19 +22,11 @@ class LoggerFactory {
 			throw new InvalidArgumentException( '$quietMode must be boolean' );
 		}
 
-		$formatter = new LineFormatter( "[%datetime%]: %message%\n" );
-
-		if ( $quietMode === true ) {
-			$handler = new NullHandler();
-		} else {
-			$handler = new StreamHandler( 'php://stdout' );
-			$handler->setFormatter( $formatter );
+		if ( $quietMode ) {
+			return new NullLogger();
 		}
 
-		$logger = new Logger( $loggerName );
-		$logger->pushHandler( $handler );
-
-		return $logger;
+		return new StdoutLogger();
 	}
 
 }

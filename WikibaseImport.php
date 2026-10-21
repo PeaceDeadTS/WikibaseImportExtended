@@ -1,15 +1,11 @@
 <?php
 
 if ( function_exists( 'wfLoadExtension' ) ) {
-	wfLoadExtension( 'WikibaseImport', __DIR__ . '/extension.json' );
-	// Keep i18n globals so mergeMessageFileList.php doesn't break
-	$wgMessagesDirs['WikibaseImport'] = __DIR__ . '/i18n';
-	$wgExtensionMessagesFiles['WikibaseImportAlias'] = __DIR__ . '/WikibaseImport.i18n.alias.php';
+	wfLoadExtension( 'WikibaseImportExtended', __DIR__ . '/extension.json' );
 	wfWarn(
-		'Deprecated PHP entry point used for WikibaseImport extension. ' .
-		'Please use wfLoadExtension instead, ' .
-		'see https://www.mediawiki.org/wiki/Extension_registration for more details.'
+		'Deprecated PHP entry point used for WikibaseImportExtended. ' .
+		'Please use wfLoadExtension( \'WikibaseImportExtended\' ) instead.'
 	);
 } else {
-	die( 'WikibaseImport requires MediaWiki 1.25+' );
+	die( 'WikibaseImportExtended requires MediaWiki 1.44+.' );
 }

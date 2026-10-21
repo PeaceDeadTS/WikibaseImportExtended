@@ -2,15 +2,14 @@
 
 namespace Wikibase\Import;
 
-use DataValues\Serializers\DataValueSerializer;
-use LoadBalancer;
+use MediaWiki\User\User;
 use Psr\Log\LoggerInterface;
-use Wikibase\DataModel\DeserializerFactory;
-use Wikibase\DataModel\SerializerFactory;
-use Wikibase\Lib\Store\EntityStore;
+use Wikibase\DataModel\Entity\EntityIdParser;
 use Wikibase\Import\Store\DBImportedEntityMappingStore;
-use Wikibase\Import\Store\ImportedEntityMappingStore;
+use Wikibase\Lib\Store\EntityStore;
+use Wikibase\Repo\Store\Store;
 use Wikibase\Repo\WikibaseRepo;
+use Wikimedia\Rdbms\IConnectionProvider;
 
 class EntityImporterFactory {
 
@@ -20,14 +19,19 @@ class EntityImporterFactory {
 	private $entityStore;
 
 	/**
-	 * @var LoadBalancer
+	 * @var Store
 	 */
-	private $loadBalancer;
+	private $store;
 
 	/**
-	 * @var ImportedEntityMappingStore
+	 * @var IConnectionProvider
 	 */
-	private $importedEntityMappingStore;
+	private $dbProvider;
+
+	/**
+	 * @var EntityIdParser
+	 */
+	private $entityIdParser;
 
 	/**
 	 * @var LoggerInterface
@@ -35,28 +39,85 @@ class EntityImporterFactory {
 	private $logger;
 
 	/**
+	 * @var SourceHttp
+	 */
+	private $http;
+
+	/**
 	 * @var string
 	 */
 	private $apiUrl;
 
+	/**
+	 * @var User|null
+	 */
+	private $user;
+
+	/**
+	 * @var bool
+	 */
+	private $dryRun;
+
+	/**
+	 * @var bool
+	 */
+	private $importSitelinks;
+
+	/**
+	 * @var bool
+	 */
+	private $mappingTableReady;
+
+	/**
+	 * @var int
+	 */
+	private $botFlag;
+
+	/**
+	 * @var EntityImporter|null
+	 */
 	private $entityImporter = null;
 
 	/**
 	 * @param EntityStore $entityStore
-	 * @param LoadBalancer $loadBalancer
+	 * @param Store $store
+	 * @param IConnectionProvider $dbProvider
+	 * @param EntityIdParser $entityIdParser
 	 * @param LoggerInterface $logger
+	 * @param SourceHttp $http
 	 * @param string $apiUrl
+	 * @param User|null $user
+	 * @param bool $dryRun
+	 * @param bool $importSitelinks
+	 * @param bool $mappingTableReady
+	 * @param int $botFlag
 	 */
 	public function __construct(
 		EntityStore $entityStore,
-		LoadBalancer $loadBalancer,
+		Store $store,
+		IConnectionProvider $dbProvider,
+		EntityIdParser $entityIdParser,
 		LoggerInterface $logger,
-		$apiUrl
+		SourceHttp $http,
+		$apiUrl,
+		$user,
+		$dryRun,
+		$importSitelinks,
+		$mappingTableReady,
+		$botFlag
 	) {
 		$this->entityStore = $entityStore;
-		$this->loadBalancer = $loadBalancer;
+		$this->store = $store;
+		$this->dbProvider = $dbProvider;
+		$this->entityIdParser = $entityIdParser;
 		$this->logger = $logger;
+		$this->http = $http;
 		$this->apiUrl = $apiUrl;
+		$this->user = $user;
+		$this->dryRun = (bool)$dryRun;
+		$this->importSitelinks = (bool)$importSitelinks;
+		$this->mappingTableReady = (bool)$mappingTableReady;
+		$this->botFlag = (int)$botFlag;
 	}
 
 	/**
@@ -64,14 +125,40 @@ class EntityImporterFactory {
 	 */
 	public function newEntityImporter() {
 		if ( $this->entityImporter === null ) {
+			$mappingStore = $this->newMappingStore();
+			$copier = new StatementCopier( $mappingStore, $this->logger );
+
 			$this->entityImporter = new EntityImporter(
-				$this->newStatementsImporter(),
-				$this->newBadgeItemUpdater(),
-				$this->getApiEntityLookup(),
+				new StatementsImporter(
+					$copier,
+					$mappingStore,
+					$this->store->getEntityRevisionLookup( Store::LOOKUP_CACHING_DISABLED ),
+					$this->entityStore,
+					$this->user,
+					$this->logger,
+					$this->dryRun,
+					$this->botFlag
+				),
+				new BadgeItemUpdater( $mappingStore ),
+				new ApiEntityLookup(
+					WikibaseRepo::getBaseDataModelDeserializerFactory()->newEntityDeserializer(),
+					$this->logger,
+					$this->http,
+					$this->apiUrl
+				),
 				$this->entityStore,
-				$this->getImportedEntityMappingStore(),
-				new PagePropsStatementCountLookup( $this->loadBalancer ),
-				$this->logger
+				$mappingStore,
+				new PagePropsStatementCountLookup(
+					$this->dbProvider,
+					WikibaseRepo::getEntityNamespaceLookup()
+				),
+				$this->newTermSanitizer(),
+				WikibaseRepo::getDataTypeFactory(),
+				$this->logger,
+				$this->user,
+				$this->dryRun,
+				$this->importSitelinks,
+				$this->botFlag
 			);
 		}
 
@@ -79,55 +166,25 @@ class EntityImporterFactory {
 	}
 
 	/**
-	 * @return ApiEntityLookup
+	 * @return DBImportedEntityMappingStore
 	 */
-	public function getApiEntityLookup() {
-		return new ApiEntityLookup(
-			$this->newEntityDeserializer(),
-			$this->logger,
-			$this->apiUrl
+	private function newMappingStore() {
+		return new DBImportedEntityMappingStore(
+			$this->dbProvider,
+			$this->entityIdParser,
+			$this->mappingTableReady,
+			$this->dryRun
 		);
 	}
 
-	private function newBadgeItemUpdater() {
-		return new BadgeItemUpdater( $this->getImportedEntityMappingStore() );
+	/**
+	 * @return TermSanitizer
+	 */
+	private function newTermSanitizer() {
+		$limits = WikibaseRepo::getSettings()->getSetting( 'string-limits' );
+		$maxLength = $limits['multilang']['length'] ?? 250;
+
+		return new TermSanitizer( WikibaseRepo::getTermsLanguages(), (int)$maxLength );
 	}
 
-	private function newStatementsImporter() {
-		return new StatementsImporter(
-			$this->newSerializerFactory()->newStatementSerializer(),
-			$this->getImportedEntityMappingStore(),
-			$this->logger
-		);
-	}
-
-	private function getImportedEntityMappingStore() {
-		if ( $this->importedEntityMappingStore === null ) {
-			$wikibaseRepo = WikibaseRepo::getDefaultInstance();
-
-			$this->importedEntityMappingStore = new DBImportedEntityMappingStore(
-				$this->loadBalancer,
-				$wikibaseRepo->getEntityIdParser()
-			);
-		}
-
-		return $this->importedEntityMappingStore;
-	}
-
-	private function newEntityDeserializer() {
-		$wikibaseRepo = WikibaseRepo::getDefaultInstance();
-
-		$deserializerFactory = $wikibaseRepo->getBaseDataModelDeserializerFactory();
-
-		return $deserializerFactory->newEntityDeserializer();
-	}
-
-	private function newSerializerFactory() {
-		return new SerializerFactory(
-			new DataValueSerializer()
-		);
-	}
 }
-
-$maintClass = "Wikibase\Import\Maintenance\ImportEntities";
-require_once RUN_MAINTENANCE_IF_MAIN;

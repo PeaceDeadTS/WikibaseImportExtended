@@ -2,16 +2,16 @@
 
 namespace Wikibase\Import\Maintenance;
 
-use Asparagus\QueryBuilder;
-use Asparagus\QueryExecuter;
-use Exception;
-use Psr\Log\LoggerInterface;
+use MediaWiki\Maintenance\Maintenance;
+use MediaWiki\MediaWikiServices;
+use MediaWiki\User\User;
 use Wikibase\Import\Console\ImportOptions;
 use Wikibase\Import\EntityId\EntityIdListBuilderFactory;
 use Wikibase\Import\EntityImporterFactory;
 use Wikibase\Import\LoggerFactory;
-use Wikibase\Import\QueryRunner;
 use Wikibase\Import\PropertyIdLister;
+use Wikibase\Import\QueryRunner;
+use Wikibase\Import\SourceHttp;
 use Wikibase\Repo\WikibaseRepo;
 
 $IP = getenv( 'MW_INSTALL_PATH' );
@@ -21,113 +21,180 @@ if ( $IP === false ) {
 
 require_once "$IP/maintenance/Maintenance.php";
 
-class ImportEntities extends \Maintenance {
-
-	/**
-	 * @var LoggerInterface
-	 */
-	private $logger;
+class ImportEntities extends Maintenance {
 
 	public function __construct() {
 		parent::__construct();
 
-		$this->addOptions();
-	}
-
-	private function addOptions() {
-		$this->addOption( 'file', 'File with list of entity ids to import', false, true );
-		$this->addOption( 'entity', 'ID of entity to import', false, true );
-		$this->addOption( 'query', 'Import items with property and entity id value', false, true );
-		$this->addOption( 'range', 'Range of ids to import', false, true );
-		$this->addOption( 'stdin', 'Read entity IDs to import from standard input', false, false );
-		$this->addOption( 'all-properties', 'Import all properties', false, false );
+		$this->addDescription(
+			'Import entities from another Wikibase (Wikidata by default), including labels, descriptions, aliases and statements.'
+		);
+		$this->addOption( 'file', 'File with one source entity id per line', false, true );
+		$this->addOption( 'entity', 'Source entity id to import, for example Q64', false, true );
+		$this->addOption( 'query', 'Items with a property:entity value, for example P31:Q515', false, true );
+		$this->addOption( 'range', 'Inclusive item id range, for example Q1:Q20', false, true );
+		$this->addOption( 'stdin', 'Read source entity ids from standard input, one per line' );
+		$this->addOption( 'all-properties', 'Import every property from the source wiki' );
+		$this->addOption( 'dry-run', 'Fetch and print the plan. Does not create entities or mapping rows.' );
+		$this->addOption( 'sitelinks', 'Keep source sitelinks. They are dropped unless this flag or $wgWBImportSitelinks is set.' );
+		$this->addOption( 'user', 'Existing local account that owns the edits. Default is $wgWBImportUser.', false, true );
+		$this->requireExtension( 'WikibaseImportExtended' );
 	}
 
 	public function execute() {
-		$this->logger = LoggerFactory::newLogger( 'wikibase-import', $this->mQuiet );
+		$dryRun = $this->hasOption( 'dry-run' );
+		$logger = LoggerFactory::newLogger( 'wikibase-import', $this->isQuiet() );
+		$config = $this->getConfig();
+		$services = MediaWikiServices::getInstance();
 
-		$importOptions = $this->extractOptions();
-
-		$entityIdListBuilderFactory = $this->newEntityIdListBuilderFactory();
-
+		$selected = null;
 		foreach ( $this->getValidOptions() as $option ) {
-			if ( $importOptions->hasOption( $option ) ) {
-				$entityIdListBuilder = $entityIdListBuilderFactory->newEntityIdListBuilder(
-					$option
-				);
-
-				if ( $option === 'all-properties' ) {
-					$input = 'all-properties';
-				} else {
-					$input = $importOptions->getOption( $option );
-				}
-
+			if ( $this->hasOption( $option ) ) {
+				$selected = $option;
 				break;
 			}
 		}
 
-		if ( !isset( $entityIdListBuilder ) ) {
-			$this->logger->error( 'ERROR: No valid import option was provided' );
-
-			return;
-		} else {
-			try {
-				$ids = $entityIdListBuilder->getEntityIds( $input );
-
-				$entityImporter = $this->newEntityImporter();
-				$entityImporter->importEntities( $ids );
-			} catch ( Exception $ex ) {
-				$this->logger->error( $ex->getMessage() );
-			}
-
-			$this->logger->info( 'Done' );
-		}
-	}
-
-	private function extractOptions() {
-		$options = [];
-
-		foreach ( $this->getValidOptions() as $optionName ) {
-			$options[$optionName] = $this->getOption( $optionName );
-		}
-
-		if ( empty( $options ) ) {
+		if ( $selected === null ) {
 			$this->maybeHelp( true );
 		}
 
-		return new ImportOptions( $options );
+		$importSitelinks = $this->hasOption( 'sitelinks' ) || (bool)$config->get( 'WBImportSitelinks' );
+		$db = $services->getConnectionProvider()->getPrimaryDatabase();
+		$mappingReady = $db->tableExists( 'wbs_entity_mapping', __METHOD__ );
+
+		if ( !$mappingReady && !$dryRun ) {
+			$this->fatalError(
+				"Table wbs_entity_mapping does not exist. From the MediaWiki root run:\n"
+				. "php maintenance/update.php --quick\n"
+			);
+		}
+
+		if ( $dryRun ) {
+			$this->output( "Dry-run: no entities or mapping rows will be written.\n" );
+			if ( !$mappingReady ) {
+				$this->output( "Mapping table is missing. Already-imported checks are skipped until update.php has run.\n" );
+			}
+		}
+
+		$user = null;
+		$botFlag = 0;
+		if ( !$dryRun ) {
+			$user = $this->resolveUser( (string)$this->getOption( 'user', $config->get( 'WBImportUser' ) ) );
+			$this->assertUserCanImport( $user );
+			if ( $services->getPermissionManager()->userHasRight( $user, 'bot' ) ) {
+				$botFlag = EDIT_FORCE_BOT;
+			}
+			$this->output( 'Importing as ' . $user->getName() . "\n" );
+		}
+
+		$http = new SourceHttp( $services->getHttpRequestFactory(), (string)$config->get( 'WBImportUserAgent' ) );
+		$options = [];
+		foreach ( $this->getValidOptions() as $optionName ) {
+			$options[$optionName] = $this->getOption( $optionName );
+		}
+		$importOptions = new ImportOptions( $options );
+		$input = $selected === 'all-properties' ? 'all-properties' : $importOptions->getOption( $selected );
+
+		try {
+			$ids = ( new EntityIdListBuilderFactory(
+				WikibaseRepo::getEntityIdParser(),
+				new PropertyIdLister( $http, (int)$config->get( 'WBImportSourcePropertyNamespace' ) ),
+				new QueryRunner( $http, (string)$config->get( 'WBImportQueryUrl' ), $config->get( 'WBImportQueryPrefixes' ) ),
+				(string)$config->get( 'WBImportSourceApi' )
+			) )->newEntityIdListBuilder( $selected )->getEntityIds( $input );
+		} catch ( \Throwable $ex ) {
+			$this->fatalError( $ex->getMessage() . "\n" );
+		}
+
+		$ids = array_values( array_filter( array_map( 'strval', $ids ), static function ( $id ) {
+			return trim( $id ) !== '';
+		} ) );
+
+		if ( $ids === [] ) {
+			$this->fatalError( "No entity ids to import.\n" );
+		}
+
+		$this->output( 'Source ids: ' . count( $ids ) . "\n" );
+		if ( !$importSitelinks ) {
+			$this->output( "Sitelinks from the source wiki are dropped. Pass --sitelinks to keep them.\n" );
+		}
+
+		$importer = ( new EntityImporterFactory(
+			WikibaseRepo::getStore()->getEntityStore(),
+			WikibaseRepo::getStore(),
+			$services->getConnectionProvider(),
+			WikibaseRepo::getEntityIdParser(),
+			$logger,
+			$http,
+			(string)$config->get( 'WBImportSourceApi' ),
+			$user,
+			$dryRun,
+			$importSitelinks,
+			$mappingReady,
+			$botFlag
+		) )->newEntityImporter();
+
+		try {
+			$importer->importEntities( $ids );
+		} catch ( \Throwable $ex ) {
+			$logger->error( $ex->getMessage() );
+			$this->fatalError( $ex->getMessage() . "\n" );
+		}
+
+		$logger->info( $dryRun ? 'Dry-run finished' : 'Done' );
 	}
 
+	/**
+	 * @return string[]
+	 */
 	private function getValidOptions() {
 		return [ 'entity', 'file', 'all-properties', 'query', 'range', 'stdin' ];
 	}
 
-	private function newEntityIdListBuilderFactory() {
-		$queryRunner = new QueryRunner(
-			new QueryBuilder( $this->getConfig()->get( 'WBImportQueryPrefixes' ) ),
-			new QueryExecuter( $this->getConfig()->get( 'WBImportQueryUrl' ) )
-		);
+	/**
+	 * @param string $name
+	 * @return User
+	 */
+	private function resolveUser( $name ) {
+		$user = MediaWikiServices::getInstance()->getUserFactory()->newFromName( $name );
+		if ( !( $user instanceof User ) ) {
+			$this->fatalError( "User name '$name' is not valid.\n" );
+		}
 
-		return new EntityIdListBuilderFactory(
-			WikibaseRepo::getDefaultInstance()->getEntityIdParser(),
-			new PropertyIdLister(),
-			$queryRunner,
-			$this->getConfig()->get( 'WBImportSourceApi' )
-		);
+		$user->load();
+		if ( !$user->isRegistered() ) {
+			$this->fatalError(
+				"User '$name' does not exist.\n"
+				. "Create it, then add it to the bot or sysop group (property-create is required):\n"
+				. "php maintenance/createAndPromote.php " . $name . " 'choose-a-password'\n"
+			);
+		}
+
+		return $user;
 	}
 
-	private function newEntityImporter() {
-		$entityImporterFactory = new EntityImporterFactory(
-			WikibaseRepo::getDefaultInstance()->getStore()->getEntityStore(),
-			wfGetLB(),
-			$this->logger,
-			$this->getConfig()->get( 'WBImportSourceApi' )
-		);
+	/**
+	 * @param User $user
+	 */
+	private function assertUserCanImport( User $user ) {
+		$permissionManager = MediaWikiServices::getInstance()->getPermissionManager();
+		$missing = [];
+		foreach ( [ 'edit', 'createpage', 'property-create' ] as $right ) {
+			if ( !$permissionManager->userHasRight( $user, $right ) ) {
+				$missing[] = $right;
+			}
+		}
 
-		return $entityImporterFactory->newEntityImporter();
+		if ( $missing !== [] ) {
+			$this->fatalError(
+				"User '" . $user->getName() . "' lacks: " . implode( ', ', $missing ) . ".\n"
+				. "On this wiki property-create is granted to the bot, sysop and bureaucrat groups.\n"
+			);
+		}
 	}
 
 }
 
-$maintClass = "Wikibase\Import\Maintenance\ImportEntities";
+$maintClass = ImportEntities::class;
 require_once RUN_MAINTENANCE_IF_MAIN;
