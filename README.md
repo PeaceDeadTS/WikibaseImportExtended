@@ -47,6 +47,8 @@ printf 'Q%s\n' 1 2 3 | php maintenance/run.php WikibaseImportExtended:importEnti
 
 Without `--statements`, only labels, descriptions and aliases of the requested ids are imported. Referenced entities are not fetched. With `--statements`, only the requested entities receive statements. Entities they point at are created with labels, descriptions and aliases only. Import those ids themselves when their statements are needed.
 
+A repeated run does not create a second entity while the local page still exists. If that page was deleted, the same local id is created again as a new page. The archived revision is not restored, so statements that were on the deleted page do not come back. Statements are copied only when `--statements` is set, and then they are copied by the current importer onto the new page. A page that still exists, including a redirect, is left unchanged. The mapping row is kept.
+
 `--query` and `--range` can match a very large set. Try one `--entity` with `--dry-run` first.
 
 Configuration

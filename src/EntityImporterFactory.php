@@ -147,6 +147,7 @@ class EntityImporterFactory {
 					$this->apiUrl
 				),
 				$this->entityStore,
+				$this->store->getEntityRevisionLookup( Store::LOOKUP_CACHING_DISABLED ),
 				$mappingStore,
 				new PagePropsStatementCountLookup(
 					$this->dbProvider,

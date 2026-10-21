@@ -87,6 +87,8 @@
 				"wikibaseimport-action-create",
 				"wikibaseimport-action-exists",
 				"wikibaseimport-action-created",
+				"wikibaseimport-action-recreate",
+				"wikibaseimport-action-recreated",
 				"wikibaseimport-action-statements",
 				"wikibaseimport-statements-plan",
 				"wikibaseimport-empty-entity",

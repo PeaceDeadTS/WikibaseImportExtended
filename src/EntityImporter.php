@@ -16,7 +16,9 @@ use Wikibase\DataModel\Statement\StatementListProvider;
 use Wikibase\DataModel\Term\FingerprintProvider;
 use Wikibase\Import\Store\ImportedEntityMappingStore;
 use Wikibase\Lib\DataTypeFactory;
+use Wikibase\Lib\Store\EntityRevisionLookup;
 use Wikibase\Lib\Store\EntityStore;
+use Wikibase\Lib\Store\LookupConstants;
 
 class EntityImporter {
 
@@ -41,6 +43,11 @@ class EntityImporter {
 	 * @var EntityStore
 	 */
 	private $entityStore;
+
+	/**
+	 * @var EntityRevisionLookup
+	 */
+	private $revisionLookup;
 
 	/**
 	 * @var ImportedEntityMappingStore
@@ -102,6 +109,7 @@ class EntityImporter {
 	 * @param BadgeItemUpdater $badgeItemUpdater
 	 * @param ApiEntityLookup $apiEntityLookup
 	 * @param EntityStore $entityStore
+	 * @param EntityRevisionLookup $revisionLookup
 	 * @param ImportedEntityMappingStore $entityMappingStore
 	 * @param StatementsCountLookup $statementsCountLookup
 	 * @param TermSanitizer $termSanitizer
@@ -117,6 +125,7 @@ class EntityImporter {
 		BadgeItemUpdater $badgeItemUpdater,
 		ApiEntityLookup $apiEntityLookup,
 		EntityStore $entityStore,
+		EntityRevisionLookup $revisionLookup,
 		ImportedEntityMappingStore $entityMappingStore,
 		StatementsCountLookup $statementsCountLookup,
 		TermSanitizer $termSanitizer,
@@ -131,6 +140,7 @@ class EntityImporter {
 		$this->badgeItemUpdater = $badgeItemUpdater;
 		$this->apiEntityLookup = $apiEntityLookup;
 		$this->entityStore = $entityStore;
+		$this->revisionLookup = $revisionLookup;
 		$this->entityMappingStore = $entityMappingStore;
 		$this->statementsCountLookup = $statementsCountLookup;
 		$this->termSanitizer = $termSanitizer;
@@ -240,9 +250,19 @@ class EntityImporter {
 
 		$serialization = $sourceId->getSerialization();
 		$existing = $this->entityMappingStore->getLocalId( $sourceId );
+		$recreateId = null;
 		if ( $existing !== null && $this->entityMappingStore->isPersisted( $sourceId ) ) {
-			$this->logger->info( "$serialization already imported as " . $existing->getSerialization() );
-			return;
+			$pageExists = $this->localPageExists( $existing );
+			if ( $pageExists === null ) {
+				return;
+			}
+			if ( $pageExists ) {
+				$this->logger->info( "$serialization already imported as " . $existing->getSerialization() );
+				return;
+			}
+			// The mapping row still points here, but the page was deleted.
+			// Keep this id. A new id would leave the row, and undelete would make a second entity.
+			$recreateId = $existing;
 		}
 
 		if ( $entity instanceof Property && !$this->dataTypeEnabled( $entity ) ) {
@@ -276,10 +296,18 @@ class EntityImporter {
 			$importStatements
 		);
 
+		if ( $recreateId !== null ) {
+			$this->logger->info(
+				$serialization . ' mapped to deleted ' . $recreateId->getSerialization() . ', recreating that page'
+			);
+		}
+
 		if ( $this->dryRun ) {
 			$this->logger->info( 'DRY-RUN ' . $summary );
-			// Identity mapping lets statement copying count links without writing.
-			$this->entityMappingStore->add( $sourceId, $sourceId );
+			if ( $recreateId === null ) {
+				// Identity mapping lets statement copying count links without writing.
+				$this->entityMappingStore->add( $sourceId, $sourceId );
+			}
 			return;
 		}
 
@@ -287,8 +315,13 @@ class EntityImporter {
 			throw new \RuntimeException( 'Import user is required when dry-run is off' );
 		}
 
-		$entity->setId( null );
-		$this->logger->info( 'Creating ' . $summary );
+		if ( $recreateId !== null ) {
+			$entity->setId( $recreateId );
+			$this->logger->info( 'Recreating ' . $summary );
+		} else {
+			$entity->setId( null );
+			$this->logger->info( 'Creating ' . $summary );
+		}
 
 		try {
 			$revision = $this->saveNewEntity( $entity, $serialization );
@@ -303,8 +336,48 @@ class EntityImporter {
 			return;
 		}
 
+		if ( $recreateId !== null ) {
+			if ( !$localId->equals( $recreateId ) ) {
+				$this->logger->error(
+					"Saved $serialization as " . $localId->getSerialization()
+					. ' but the mapping points at ' . $recreateId->getSerialization()
+				);
+				return;
+			}
+			// The mapping row already exists. Inserting it again would hit the unique key.
+			$this->logger->info( "$serialization recreated as " . $localId->getSerialization() );
+			return;
+		}
+
 		$this->logger->info( "$serialization created as " . $localId->getSerialization() );
 		$this->entityMappingStore->add( $sourceId, $localId );
+	}
+
+	/**
+	 * True when the local page is still there, including a redirect.
+	 * Null when the lookup failed: the caller must not create a second entity.
+	 *
+	 * @param EntityId $id
+	 * @return bool|null
+	 */
+	private function localPageExists( EntityId $id ) {
+		try {
+			return $this->revisionLookup->getLatestRevisionId(
+				$id,
+				LookupConstants::LATEST_FROM_MASTER
+			)->onConcreteRevision( static function () {
+				return true;
+			} )->onRedirect( static function () {
+				return true;
+			} )->onNonexistentEntity( static function () {
+				return false;
+			} )->map();
+		} catch ( \Throwable $ex ) {
+			$this->logger->error(
+				'Could not check whether ' . $id->getSerialization() . ' still exists: ' . $ex->getMessage()
+			);
+			return null;
+		}
 	}
 
 	/**
@@ -313,7 +386,13 @@ class EntityImporter {
 	 * @return \Wikibase\Lib\Store\EntityRevision
 	 */
 	private function saveNewEntity( EntityDocument $entity, $sourceId ) {
-		$summary = 'Import entity ' . $sourceId;
+		$localId = $entity->getId();
+		if ( $localId === null ) {
+			$summary = 'Import entity ' . $sourceId;
+		} else {
+			// New page at the old id. Undelete would put the archived statements back.
+			$summary = 'Recreate deleted entity ' . $sourceId . ' as ' . $localId->getSerialization();
+		}
 		try {
 			return $this->entityStore->saveEntity(
 				$entity,

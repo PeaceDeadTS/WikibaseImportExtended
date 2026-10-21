@@ -40,7 +40,7 @@ class ImportPlanParser {
 		}
 
 		if ( preg_match(
-			'/^(?:DRY-RUN|Creating) (\S+) (' . self::ID . ')(?: "([^"]*)")? labels=(\d+) descriptions=(\d+) '
+			'/^(?:DRY-RUN|Creating|Recreating) (\S+) (' . self::ID . ')(?: "([^"]*)")? labels=(\d+) descriptions=(\d+) '
 			. 'aliases=(\d+) droppedTerms=(\d+) statements=(.*) sitelinks=(.*)$/',
 			$message,
 			$match
@@ -63,6 +63,17 @@ class ImportPlanParser {
 		if ( preg_match( '/^(' . self::ID . ') already imported as (' . self::ID . ')$/', $message, $match ) ) {
 			$row =& $this->row( $rows, $match[1] );
 			$row['action'] = 'exists';
+			$row['localId'] = $match[2];
+			return;
+		}
+
+		if ( preg_match(
+			'/^(' . self::ID . ') mapped to deleted (' . self::ID . '), recreating that page$/',
+			$message,
+			$match
+		) ) {
+			$row =& $this->row( $rows, $match[1] );
+			$row['action'] = 'recreate';
 			$row['localId'] = $match[2];
 			return;
 		}
@@ -92,6 +103,13 @@ class ImportPlanParser {
 		if ( preg_match( '/^(' . self::ID . ') created as (' . self::ID . ')$/', $message, $match ) ) {
 			$row =& $this->row( $rows, $match[1] );
 			$row['action'] = 'created';
+			$row['localId'] = $match[2];
+			return;
+		}
+
+		if ( preg_match( '/^(' . self::ID . ') recreated as (' . self::ID . ')$/', $message, $match ) ) {
+			$row =& $this->row( $rows, $match[1] );
+			$row['action'] = 'recreated';
 			$row['localId'] = $match[2];
 		}
 	}

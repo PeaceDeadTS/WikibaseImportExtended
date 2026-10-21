@@ -148,6 +148,8 @@
 			create: 'wikibaseimport-action-create',
 			exists: 'wikibaseimport-action-exists',
 			created: 'wikibaseimport-action-created',
+			recreate: 'wikibaseimport-action-recreate',
+			recreated: 'wikibaseimport-action-recreated',
 			statements: 'wikibaseimport-action-statements'
 		}[ action ];
 		return key ? mw.msg( key ) : action;
