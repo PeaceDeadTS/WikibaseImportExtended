@@ -7,9 +7,14 @@
 	}
 
 	var entityInput = document.getElementById( 'wbimport-entity' );
+	var localInput = document.getElementById( 'wbimport-local' );
 	var userInput = document.getElementById( 'wbimport-user' );
 	var statementsInput = document.getElementById( 'wbimport-statements' );
 	var sitelinksInput = document.getElementById( 'wbimport-sitelinks' );
+	var replaceDescriptionInput = document.getElementById( 'wbimport-replace-description' );
+	var addAliasesInput = document.getElementById( 'wbimport-add-aliases' );
+	var extendFields = document.getElementById( 'wbimport-extend-fields' );
+	var extendOptions = document.getElementById( 'wbimport-extend-options' );
 	var checkButton = document.getElementById( 'wbimport-check' );
 	var importButton = document.getElementById( 'wbimport-import' );
 	var pending = document.getElementById( 'wbimport-pending' );
@@ -26,12 +31,28 @@
 		return value;
 	}
 
+	function currentOperation() {
+		var selected = form.querySelector( 'input[name="wbimport-operation"]:checked' );
+		return selected ? selected.value : 'new';
+	}
+
+	function syncOperation() {
+		var extend = currentOperation() === 'extend';
+		extendFields.hidden = !extend;
+		extendOptions.hidden = !extend;
+		importButton.textContent = mw.msg( extend ? 'wikibaseimport-extend-button' : 'wikibaseimport-import' );
+	}
+
 	function requestKey() {
 		return [
+			currentOperation(),
+			currentOperation() === 'extend' ? normalizeEntity( localInput.value ) : '',
 			normalizeEntity( entityInput.value ),
 			userInput.value.trim(),
 			statementsInput.checked ? '1' : '0',
-			sitelinksInput.checked ? '1' : '0'
+			sitelinksInput.checked ? '1' : '0',
+			replaceDescriptionInput.checked ? '1' : '0',
+			addAliasesInput.checked ? '1' : '0'
 		].join( '\n' );
 	}
 
@@ -96,6 +117,18 @@
 			serverOn( data, 'sitelinksparam', 'sitelinks' ) === sitelinksInput.checked;
 	}
 
+	function extendMatch( data ) {
+		if ( ( data.operation || 'new' ) !== currentOperation() ) {
+			return false;
+		}
+		if ( currentOperation() !== 'extend' ) {
+			return true;
+		}
+		return ( data.localentity || '' ) === normalizeEntity( localInput.value ) &&
+			( data.replacedescriptionparam || '0' ) === ( replaceDescriptionInput.checked ? '1' : '0' ) &&
+			( data.addaliasesparam || '0' ) === ( addAliasesInput.checked ? '1' : '0' );
+	}
+
 	function onOff( on ) {
 		return mw.msg( on ? 'wikibaseimport-on' : 'wikibaseimport-off' );
 	}
@@ -133,6 +166,14 @@
 	}
 
 	function statementsText( entity ) {
+		if ( entity.statementsmerged !== null && entity.statementsmerged !== undefined ) {
+			return mw.msg(
+				'wikibaseimport-statements-extend',
+				entity.statementswritten || 0,
+				entity.statementsmerged,
+				entity.statementsskipped || 0
+			);
+		}
 		if ( entity.statementswritten !== null && entity.statementswritten !== undefined ) {
 			return mw.msg(
 				'wikibaseimport-statements-plan',
@@ -150,7 +191,9 @@
 			created: 'wikibaseimport-action-created',
 			recreate: 'wikibaseimport-action-recreate',
 			recreated: 'wikibaseimport-action-recreated',
-			statements: 'wikibaseimport-action-statements'
+			statements: 'wikibaseimport-action-statements',
+			extend: 'wikibaseimport-action-extend',
+			extended: 'wikibaseimport-action-extended'
 		}[ action ];
 		return key ? mw.msg( key ) : action;
 	}
@@ -220,7 +263,11 @@
 		var type = 'error';
 		var summary;
 		var mismatch = step === 'check' && !!data.ok && !flagsMatch( data );
-		if ( mismatch ) {
+		var extendMismatch = step === 'check' && !!data.ok && flagsMatch( data ) && !extendMatch( data );
+		if ( extendMismatch ) {
+			type = 'error';
+			summary = mw.msg( 'wikibaseimport-extend-mismatch' );
+		} else if ( mismatch ) {
 			type = 'error';
 			summary = mw.msg(
 				'wikibaseimport-mode-mismatch',
@@ -252,9 +299,16 @@
 		var lines = String( summary ).split( '\n' ).filter( function ( line ) {
 			return line !== '';
 		} );
-		if ( !mismatch && ( data.ok || data.sourcecount ) ) {
+		if ( !mismatch && !extendMismatch && ( data.ok || data.sourcecount ) ) {
 			var copyStatements = serverOn( data, 'statementsparam', 'statements' );
 			lines.push( mw.msg( copyStatements ? 'wikibaseimport-mode-statements' : 'wikibaseimport-mode-terms' ) );
+			if ( data.operation === 'extend' ) {
+				lines.push( mw.msg(
+					'wikibaseimport-mode-extend',
+					data.localentity || '',
+					normalizeEntity( entityInput.value )
+				) );
+			}
 			var related = ( data.entities ? data.entities.length : 0 ) - ( data.sourcecount || 0 );
 			if ( copyStatements && related > 0 ) {
 				lines.push( mw.msg( 'wikibaseimport-related-count', related ) );
@@ -267,7 +321,7 @@
 		if ( data.log && data.log.length ) {
 			result.appendChild( buildLog( data.log ) );
 		}
-		if ( step === 'check' && data.ok && !mismatch ) {
+		if ( step === 'check' && data.ok && !mismatch && !extendMismatch ) {
 			checkedKey = requestKey();
 			showImport();
 		} else {
@@ -287,15 +341,26 @@
 
 	function post( step ) {
 		var api = new mw.Api();
+		var operation = currentOperation();
 		return api.postWithToken( 'csrf', {
 			action: 'wikibaseimport',
 			formatversion: 2,
 			step: step,
+			operation: operation,
 			entity: normalizeEntity( entityInput.value ),
+			localentity: operation === 'extend' ? normalizeEntity( localInput.value ) : '',
 			user: userInput.value.trim(),
 			statements: statementsInput.checked ? '1' : '0',
-			sitelinks: sitelinksInput.checked ? '1' : '0'
+			sitelinks: sitelinksInput.checked ? '1' : '0',
+			replacedescription: replaceDescriptionInput.checked ? '1' : '0',
+			addaliases: addAliasesInput.checked ? '1' : '0'
 		} );
+	}
+
+	function showError( key ) {
+		result.textContent = '';
+		result.appendChild( messageBox( 'error', [ mw.msg( key ) ] ) );
+		hideImport();
 	}
 
 	form.addEventListener( 'submit', function ( event ) {
@@ -304,10 +369,24 @@
 			return;
 		}
 		if ( normalizeEntity( entityInput.value ) === '' ) {
-			result.textContent = '';
-			result.appendChild( messageBox( 'error', [ mw.msg( 'wikibaseimport-empty-entity' ) ] ) );
-			hideImport();
+			showError( 'wikibaseimport-empty-entity' );
 			return;
+		}
+		if ( currentOperation() === 'extend' ) {
+			var localId = normalizeEntity( localInput.value );
+			var sourceId = normalizeEntity( entityInput.value );
+			if ( localId === '' ) {
+				showError( 'wikibaseimport-empty-local' );
+				return;
+			}
+			if ( !/^[QP]\d+$/.test( localId ) || !/^[QP]\d+$/.test( sourceId ) ) {
+				showError( 'wikibaseimport-bad-id' );
+				return;
+			}
+			if ( localId.charAt( 0 ) !== sourceId.charAt( 0 ) ) {
+				showError( 'wikibaseimport-id-mismatch' );
+				return;
+			}
 		}
 		setBusy( true, mw.msg( 'wikibaseimport-pending-check' ) );
 		post( 'check' ).then( function ( data ) {
@@ -335,7 +414,20 @@
 		} );
 	} );
 
-	[ entityInput, userInput, statementsInput, sitelinksInput ].forEach( function ( input ) {
+	syncOperation();
+	Array.prototype.forEach.call(
+		form.querySelectorAll( 'input[name="wbimport-operation"]' ),
+		function ( input ) {
+			input.addEventListener( 'change', function () {
+				syncOperation();
+				if ( checkedKey && requestKey() !== checkedKey ) {
+					hideImport();
+				}
+			} );
+		}
+	);
+
+	[ entityInput, localInput, userInput, statementsInput, sitelinksInput, replaceDescriptionInput, addAliasesInput ].forEach( function ( input ) {
 		input.addEventListener( 'input', function () {
 			if ( checkedKey && requestKey() !== checkedKey ) {
 				hideImport();

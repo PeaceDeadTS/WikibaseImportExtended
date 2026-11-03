@@ -86,29 +86,39 @@ class ImportRunner {
 
 		$http = new SourceHttp( $services->getHttpRequestFactory(), (string)$config->get( 'WBImportUserAgent' ) );
 
-		try {
-			$ids = ( new EntityIdListBuilderFactory(
-				WikibaseRepo::getEntityIdParser(),
-				new PropertyIdLister( $http, (int)$config->get( 'WBImportSourcePropertyNamespace' ) ),
-				new QueryRunner( $http, (string)$config->get( 'WBImportQueryUrl' ), $config->get( 'WBImportQueryPrefixes' ) ),
-				(string)$config->get( 'WBImportSourceApi' )
-			) )->newEntityIdListBuilder( $job->mode )->getEntityIds( $job->input );
-		} catch ( \Throwable $ex ) {
-			$this->result->fatal = $ex->getMessage() . "\n";
-			return $this->finish();
+		$ids = [];
+		if ( $job->extendLocalId !== '' ) {
+			$this->emit(
+				'Extend local ' . $job->extendLocalId . ' from source ' . trim( (string)$job->input ) . ".\n"
+			);
+			$this->emit( 'Replace description: ' . ( $job->replaceDescription ? 'yes' : 'no' ) . "\n" );
+			$this->emit( 'Add missing aliases: ' . ( $job->addAliases ? 'yes' : 'no' ) . "\n" );
+			$this->result->sourceCount = 1;
+		} else {
+			try {
+				$ids = ( new EntityIdListBuilderFactory(
+					WikibaseRepo::getEntityIdParser(),
+					new PropertyIdLister( $http, (int)$config->get( 'WBImportSourcePropertyNamespace' ) ),
+					new QueryRunner( $http, (string)$config->get( 'WBImportQueryUrl' ), $config->get( 'WBImportQueryPrefixes' ) ),
+					(string)$config->get( 'WBImportSourceApi' )
+				) )->newEntityIdListBuilder( $job->mode )->getEntityIds( $job->input );
+			} catch ( \Throwable $ex ) {
+				$this->result->fatal = $ex->getMessage() . "\n";
+				return $this->finish();
+			}
+
+			$ids = array_values( array_filter( array_map( 'strval', $ids ), static function ( $id ) {
+				return trim( $id ) !== '';
+			} ) );
+
+			if ( $ids === [] ) {
+				$this->result->fatal = "No entity ids to import.\n";
+				return $this->finish();
+			}
+
+			$this->result->sourceCount = count( $ids );
+			$this->emit( 'Source ids: ' . count( $ids ) . "\n" );
 		}
-
-		$ids = array_values( array_filter( array_map( 'strval', $ids ), static function ( $id ) {
-			return trim( $id ) !== '';
-		} ) );
-
-		if ( $ids === [] ) {
-			$this->result->fatal = "No entity ids to import.\n";
-			return $this->finish();
-		}
-
-		$this->result->sourceCount = count( $ids );
-		$this->emit( 'Source ids: ' . count( $ids ) . "\n" );
 		if ( !$job->sitelinks ) {
 			$this->emit( "Sitelinks from the source wiki are dropped. Pass --sitelinks to keep them.\n" );
 		}
@@ -129,7 +139,17 @@ class ImportRunner {
 		) )->newEntityImporter();
 
 		try {
-			$importer->importEntities( $ids, $job->statements );
+			if ( $job->extendLocalId !== '' ) {
+				$importer->extendEntity(
+					(string)$job->input,
+					$job->extendLocalId,
+					$job->statements,
+					$job->replaceDescription,
+					$job->addAliases
+				);
+			} else {
+				$importer->importEntities( $ids, $job->statements );
+			}
 		} catch ( \Throwable $ex ) {
 			$logger->error( $ex->getMessage() );
 			$this->result->fatal = $ex->getMessage() . "\n";

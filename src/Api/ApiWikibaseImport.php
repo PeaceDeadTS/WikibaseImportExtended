@@ -15,6 +15,7 @@ use Wikimedia\RequestTimeout\RequestTimeout;
 
 /**
  * Dry-run (step=check) or import (step=import) of one source entity.
+ * operation=extend supplements an existing local entity instead of creating one.
  */
 class ApiWikibaseImport extends ApiBase {
 
@@ -26,40 +27,122 @@ class ApiWikibaseImport extends ApiBase {
 		}
 
 		$params = $this->extractRequestParams();
+		$step = (string)$params['step'];
+		$operation = (string)$params['operation'];
 		$entity = $this->normalizeEntity( (string)$params['entity'] );
+		$localEntity = $this->normalizeEntity( (string)$params['localentity'] );
+		// Exact "1" only. A boolean cast would treat the strings "false" and "on" as true.
+		$statementsParam = (string)$params['statements'];
+		$sitelinksParam = (string)$params['sitelinks'];
+		$replaceDescriptionParam = (string)$params['replacedescription'];
+		$addAliasesParam = (string)$params['addaliases'];
 		if ( $entity === '' ) {
 			$this->addPayload( $this->emptyPayload(
-				(string)$params['step'],
-				$this->msg( 'wikibaseimport-empty-entity' )->text()
+				$step,
+				$this->msg( 'wikibaseimport-empty-entity' )->text(),
+				$operation,
+				'',
+				$statementsParam,
+				$sitelinksParam,
+				$replaceDescriptionParam,
+				$addAliasesParam
 			) );
 			return;
 		}
 
+		$extendLocalId = '';
+		if ( $operation === 'extend' ) {
+			if ( $localEntity === '' ) {
+				$this->addPayload( $this->emptyPayload(
+					$step,
+					$this->msg( 'wikibaseimport-empty-local' )->text(),
+					$operation,
+					'',
+					$statementsParam,
+					$sitelinksParam,
+					$replaceDescriptionParam,
+					$addAliasesParam
+				) );
+				return;
+			}
+			if ( !$this->isEntityId( $entity ) || !$this->isEntityId( $localEntity ) ) {
+				$this->addPayload( $this->emptyPayload(
+					$step,
+					$this->msg( 'wikibaseimport-bad-id' )->text(),
+					$operation,
+					$localEntity,
+					$statementsParam,
+					$sitelinksParam,
+					$replaceDescriptionParam,
+					$addAliasesParam
+				) );
+				return;
+			}
+			if ( $entity[0] !== $localEntity[0] ) {
+				$this->addPayload( $this->emptyPayload(
+					$step,
+					$this->msg( 'wikibaseimport-id-mismatch' )->text(),
+					$operation,
+					$localEntity,
+					$statementsParam,
+					$sitelinksParam,
+					$replaceDescriptionParam,
+					$addAliasesParam
+				) );
+				return;
+			}
+			$extendLocalId = $localEntity;
+		}
+
 		$config = $this->getConfig();
 		$userName = ImportUserResolver::resolveUserName( $params['user'], $config->get( 'WBImportUser' ) );
-		// Exact "1" only. A boolean cast would treat the strings "false" and "on" as true.
-		$statementsParam = (string)$params['statements'];
-		$sitelinksParam = (string)$params['sitelinks'];
 		$job = new ImportJob(
 			'entity',
 			$entity,
 			$userName,
-			$params['step'] === 'check',
+			$step === 'check',
 			$statementsParam === '1',
-			$sitelinksParam === '1'
+			$sitelinksParam === '1',
+			$extendLocalId,
+			$operation === 'extend' && $replaceDescriptionParam === '1',
+			$operation !== 'extend' || $addAliasesParam === '1'
 		);
 		$run = ( new ImportRunner() )->run( $job, new BufferLogger(), static function ( $line ) {
 		} );
 
-		$this->addPayload( $this->present( $run, $userName, $statementsParam, $sitelinksParam ) );
+		$this->addPayload( $this->present(
+			$run,
+			$userName,
+			$statementsParam,
+			$sitelinksParam,
+			$operation,
+			$extendLocalId,
+			$replaceDescriptionParam,
+			$addAliasesParam
+		) );
 	}
 
 	/**
 	 * @param string $step
 	 * @param string $error
+	 * @param string $operation
+	 * @param string $localEntity
+	 * @param string $statementsParam
+	 * @param string $sitelinksParam
+	 * @param string $replaceDescriptionParam
+	 * @param string $addAliasesParam
 	 * @return array<string,mixed>
 	 */
-	private function emptyPayload( $step, $error ) {
+	private function emptyPayload(
+		$step,
+		$error,
+		$operation = 'new',
+		$localEntity = '',
+		$statementsParam = '0',
+		$sitelinksParam = '0',
+		$replaceDescriptionParam = '0',
+		$addAliasesParam = '1'
+	) {
 		return [
 			'ok' => false,
 			'step' => $step,
@@ -68,8 +151,12 @@ class ApiWikibaseImport extends ApiBase {
 			'bot' => false,
 			'statements' => false,
 			'sitelinks' => false,
-			'statementsparam' => '0',
-			'sitelinksparam' => '0',
+			'statementsparam' => $statementsParam,
+			'sitelinksparam' => $sitelinksParam,
+			'operation' => $operation,
+			'localentity' => $localEntity,
+			'replacedescriptionparam' => $replaceDescriptionParam,
+			'addaliasesparam' => $addAliasesParam,
 			'sourcecount' => 0,
 			'haswarning' => false,
 			'log' => [],
@@ -82,9 +169,22 @@ class ApiWikibaseImport extends ApiBase {
 	 * @param string $requestedUser
 	 * @param string $statementsParam Raw "0" or "1" from the request.
 	 * @param string $sitelinksParam Raw "0" or "1" from the request.
+	 * @param string $operation
+	 * @param string $localEntity
+	 * @param string $replaceDescriptionParam
+	 * @param string $addAliasesParam
 	 * @return array<string,mixed>
 	 */
-	private function present( $run, $requestedUser, $statementsParam, $sitelinksParam ) {
+	private function present(
+		$run,
+		$requestedUser,
+		$statementsParam,
+		$sitelinksParam,
+		$operation,
+		$localEntity,
+		$replaceDescriptionParam,
+		$addAliasesParam
+	) {
 		$log = [
 			[
 				'level' => 'output',
@@ -114,6 +214,7 @@ class ApiWikibaseImport extends ApiBase {
 				'statements' => (string)$entity['statements'],
 				'sitelinks' => (string)$entity['sitelinks'],
 				'statementswritten' => $entity['statementsWritten'],
+				'statementsmerged' => $entity['statementsMerged'],
 				'statementsskipped' => $entity['statementsSkipped'],
 				'localid' => $localId,
 				'sourceurl' => $this->sourceUrl( $id ),
@@ -132,6 +233,10 @@ class ApiWikibaseImport extends ApiBase {
 			'sitelinks' => $run->sitelinks,
 			'statementsparam' => $statementsParam,
 			'sitelinksparam' => $sitelinksParam,
+			'operation' => $operation,
+			'localentity' => $localEntity,
+			'replacedescriptionparam' => $replaceDescriptionParam,
+			'addaliasesparam' => $addAliasesParam,
 			'sourcecount' => $run->sourceCount,
 			'haswarning' => $run->hasWarning,
 			'log' => $log,
@@ -159,6 +264,14 @@ class ApiWikibaseImport extends ApiBase {
 		}
 
 		return $id;
+	}
+
+	/**
+	 * @param string $id
+	 * @return bool
+	 */
+	private function isEntityId( $id ) {
+		return (bool)preg_match( '/^[QP]\d+$/', $id );
 	}
 
 	/**
@@ -225,6 +338,26 @@ class ApiWikibaseImport extends ApiBase {
 				ParamValidator::PARAM_DEFAULT => '0',
 				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-sitelinks',
 			],
+			'operation' => [
+				ParamValidator::PARAM_TYPE => [ 'new', 'extend' ],
+				ParamValidator::PARAM_DEFAULT => 'new',
+				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-operation',
+			],
+			'localentity' => [
+				ParamValidator::PARAM_TYPE => 'string',
+				ParamValidator::PARAM_DEFAULT => '',
+				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-localentity',
+			],
+			'replacedescription' => [
+				ParamValidator::PARAM_TYPE => [ '0', '1' ],
+				ParamValidator::PARAM_DEFAULT => '0',
+				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-replacedescription',
+			],
+			'addaliases' => [
+				ParamValidator::PARAM_TYPE => [ '0', '1' ],
+				ParamValidator::PARAM_DEFAULT => '1',
+				ApiBase::PARAM_HELP_MSG => 'apihelp-wikibaseimport-param-addaliases',
+			],
 		];
 	}
 
@@ -235,6 +368,8 @@ class ApiWikibaseImport extends ApiBase {
 		return [
 			'action=wikibaseimport&step=check&entity=Q64&user=PBDBot&statements=1'
 				=> 'apihelp-wikibaseimport-example',
+			'action=wikibaseimport&step=check&operation=extend&localentity=Q10883&entity=Q501785&addaliases=1&replacedescription=0'
+				=> 'apihelp-wikibaseimport-example-extend',
 		];
 	}
 

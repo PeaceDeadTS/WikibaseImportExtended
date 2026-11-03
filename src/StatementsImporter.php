@@ -5,6 +5,9 @@ namespace Wikibase\Import;
 use Psr\Log\LoggerInterface;
 use Wikibase\DataModel\Entity\EntityDocument;
 use Wikibase\DataModel\Entity\EntityId;
+use Wikibase\DataModel\Reference;
+use Wikibase\DataModel\ReferenceList;
+use Wikibase\DataModel\Statement\Statement;
 use Wikibase\DataModel\Statement\StatementList;
 use Wikibase\DataModel\Statement\StatementListProvider;
 use Wikibase\Import\Store\ImportedEntityMappingStore;
@@ -154,6 +157,115 @@ class StatementsImporter {
 				$skipped
 			) );
 		}
+	}
+
+	/**
+	 * Add source statements onto an existing local entity. Nothing is saved here.
+	 * A statement is added only when no local statement has the same property, main snak
+	 * and rank. Qualifiers and references are merged onto that equivalent statement.
+	 * Local statements are never removed.
+	 *
+	 * @param EntityDocument $source Source entity, still carrying its original statements.
+	 * @param StatementListProvider $local Local entity to mutate.
+	 * @return array{added:int,merged:int,skipped:int}
+	 */
+	public function mergeOnto( EntityDocument $source, StatementListProvider $local ) {
+		$added = 0;
+		$merged = 0;
+		$skipped = 0;
+		if ( !$source instanceof StatementListProvider || $source->getId() === null ) {
+			return [
+				'added' => 0,
+				'merged' => 0,
+				'skipped' => 0,
+			];
+		}
+
+		foreach ( $source->getStatements() as $statement ) {
+			$copied = $this->statementCopier->copy( $statement );
+			if ( $copied === null ) {
+				$skipped++;
+				continue;
+			}
+
+			$existing = $this->findEquivalent( $local->getStatements(), $copied );
+			if ( $existing === null ) {
+				$local->getStatements()->addStatement( $copied );
+				$added++;
+				continue;
+			}
+
+			if ( $this->mergeQualifiersAndReferences( $existing, $copied ) ) {
+				$merged++;
+			}
+		}
+
+		return [
+			'added' => $added,
+			'merged' => $merged,
+			'skipped' => $skipped,
+		];
+	}
+
+	/**
+	 * Same property, same main snak and same rank. Rank is part of the key because
+	 * the copier keeps it on the statement.
+	 *
+	 * @param StatementList $statements
+	 * @param Statement $candidate
+	 * @return Statement|null
+	 */
+	private function findEquivalent( StatementList $statements, Statement $candidate ) {
+		foreach ( $statements->getByPropertyId( $candidate->getPropertyId() ) as $existing ) {
+			if ( $existing->getRank() !== $candidate->getRank() ) {
+				continue;
+			}
+			if ( $existing->getMainSnak()->equals( $candidate->getMainSnak() ) ) {
+				return $existing;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * @param Statement $local
+	 * @param Statement $incoming
+	 * @return bool True when a qualifier or reference was added.
+	 */
+	private function mergeQualifiersAndReferences( Statement $local, Statement $incoming ) {
+		$changed = false;
+		foreach ( $incoming->getQualifiers() as $snak ) {
+			if ( $local->getQualifiers()->addSnak( $snak ) ) {
+				$changed = true;
+			}
+		}
+		foreach ( $incoming->getReferences() as $reference ) {
+			if ( $this->hasSameReference( $local->getReferences(), $reference ) ) {
+				continue;
+			}
+			$local->getReferences()->addReference( $reference );
+			$changed = true;
+		}
+
+		return $changed;
+	}
+
+	/**
+	 * ReferenceList identity is the object hash, so compare contents.
+	 *
+	 * @param ReferenceList $references
+	 * @param Reference $reference
+	 * @return bool
+	 */
+	private function hasSameReference( ReferenceList $references, Reference $reference ) {
+		foreach ( $references as $existing ) {
+			if ( $existing->equals( $reference ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

@@ -13,6 +13,15 @@ interface ImportedEntityMappingStore {
 	public function add( EntityId $originalId, EntityId $localId );
 
 	/**
+	 * Remember a source-to-local id for this process without writing a row.
+	 * Extend mode uses this so the named local id wins over the mapping table.
+	 *
+	 * @param EntityId $originalId
+	 * @param EntityId $localId
+	 */
+	public function stage( EntityId $originalId, EntityId $localId );
+
+	/**
 	 * @param EntityId $originalId
 	 *
 	 * @return EntityId|null

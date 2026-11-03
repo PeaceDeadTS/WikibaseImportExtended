@@ -39,20 +39,53 @@ class ImportJob {
 	public $sitelinks;
 
 	/**
+	 * Local entity to supplement. Empty means import as new.
+	 *
+	 * @var string
+	 */
+	public $extendLocalId;
+
+	/**
+	 * @var bool
+	 */
+	public $replaceDescription;
+
+	/**
+	 * @var bool
+	 */
+	public $addAliases;
+
+	/**
 	 * @param string $mode
 	 * @param mixed $input
 	 * @param string $userName
 	 * @param bool $dryRun
 	 * @param bool $statements
 	 * @param bool $sitelinks
+	 * @param string $extendLocalId
+	 * @param bool $replaceDescription
+	 * @param bool $addAliases
 	 */
-	public function __construct( $mode, $input, $userName, $dryRun, $statements, $sitelinks ) {
+	public function __construct(
+		$mode,
+		$input,
+		$userName,
+		$dryRun,
+		$statements,
+		$sitelinks,
+		$extendLocalId = '',
+		$replaceDescription = false,
+		$addAliases = true
+	) {
 		$this->mode = (string)$mode;
 		$this->input = $input;
 		$this->userName = (string)$userName;
 		$this->dryRun = (bool)$dryRun;
 		$this->statements = (bool)$statements;
 		$this->sitelinks = (bool)$sitelinks;
+		$this->extendLocalId = (string)$extendLocalId;
+		$this->replaceDescription = (bool)$replaceDescription;
+		$this->addAliases = (bool)$addAliases;
 	}
 
 }

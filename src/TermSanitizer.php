@@ -35,6 +35,18 @@ class TermSanitizer {
 	}
 
 	/**
+	 * True when this language and text would be kept by sanitize().
+	 * A description equal to the label is not checked here.
+	 *
+	 * @param string $language
+	 * @param string $text
+	 * @return bool
+	 */
+	public function acceptTerm( $language, $text ) {
+		return $this->keepText( $language, $text );
+	}
+
+	/**
 	 * @param EntityDocument $entity
 	 * @return int Number of terms removed
 	 */

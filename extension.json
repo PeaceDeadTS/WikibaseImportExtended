@@ -1,6 +1,6 @@
 {
 	"name": "WikibaseImportExtended",
-	"version": "0.4.1",
+	"version": "0.5.0",
 	"author": [
 		"Katie Filbert",
 		"PeaceDeadTS"
@@ -44,6 +44,7 @@
 			"codexComponents": [
 				"CdxButton",
 				"CdxCheckbox",
+				"CdxRadio",
 				"CdxField",
 				"CdxLabel",
 				"CdxMessage",
@@ -90,8 +91,17 @@
 				"wikibaseimport-action-recreate",
 				"wikibaseimport-action-recreated",
 				"wikibaseimport-action-statements",
+				"wikibaseimport-action-extend",
+				"wikibaseimport-action-extended",
 				"wikibaseimport-statements-plan",
+				"wikibaseimport-statements-extend",
+				"wikibaseimport-extend-button",
+				"wikibaseimport-mode-extend",
+				"wikibaseimport-extend-mismatch",
 				"wikibaseimport-empty-entity",
+				"wikibaseimport-empty-local",
+				"wikibaseimport-bad-id",
+				"wikibaseimport-id-mismatch",
 				"wikibaseimport-request-failed",
 				"wikibaseimport-stale",
 				"wikibaseimport-pending-check",

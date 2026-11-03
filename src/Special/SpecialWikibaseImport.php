@@ -59,6 +59,46 @@ class SpecialWikibaseImport extends SpecialPage {
 			'class' => 'wbimport-form',
 			'novalidate' => 'novalidate',
 		] );
+		$html .= Html::rawElement(
+			'fieldset',
+			[ 'class' => 'wbimport-operation' ],
+			Html::element(
+				'legend',
+				[ 'class' => 'wbimport-operation__legend' ],
+				$this->msg( 'wikibaseimport-operation-label' )->text()
+			)
+			. $this->radio(
+				'wbimport-operation-new',
+				'wbimport-operation',
+				'new',
+				'wikibaseimport-operation-new',
+				'wikibaseimport-operation-new-help',
+				true
+			)
+			. $this->radio(
+				'wbimport-operation-extend',
+				'wbimport-operation',
+				'extend',
+				'wikibaseimport-operation-extend',
+				'wikibaseimport-operation-extend-help',
+				false
+			)
+		);
+		$html .= Html::rawElement(
+			'div',
+			[
+				'id' => 'wbimport-extend-fields',
+				'class' => 'wbimport-extend-fields',
+				'hidden' => 'hidden',
+			],
+			$this->textField(
+				'wbimport-local',
+				'wikibaseimport-local-entity-label',
+				'wikibaseimport-local-entity-description',
+				'',
+				'Q10883'
+			)
+		);
 		$html .= $this->textField(
 			'wbimport-entity',
 			'wikibaseimport-entity-label',
@@ -87,6 +127,26 @@ class SpecialWikibaseImport extends SpecialPage {
 			(bool)$config->get( 'WBImportSitelinks' )
 		);
 		$html .= Html::closeElement( 'div' );
+		$html .= Html::rawElement(
+			'div',
+			[
+				'id' => 'wbimport-extend-options',
+				'class' => 'wbimport-extend-fields',
+				'hidden' => 'hidden',
+			],
+			$this->checkbox(
+				'wbimport-replace-description',
+				'wikibaseimport-replace-description-label',
+				'wikibaseimport-replace-description-description',
+				false
+			)
+			. $this->checkbox(
+				'wbimport-add-aliases',
+				'wikibaseimport-add-aliases-label',
+				'wikibaseimport-add-aliases-description',
+				true
+			)
+		);
 		$html .= Html::rawElement(
 			'div',
 			[ 'class' => 'wbimport-actions' ],
@@ -166,6 +226,57 @@ class SpecialWikibaseImport extends SpecialPage {
 					'spellcheck' => 'false',
 					'autocomplete' => 'off',
 				] )
+			)
+		);
+	}
+
+	/**
+	 * @param string $id
+	 * @param string $name
+	 * @param string $value
+	 * @param string $labelMsg
+	 * @param string $descriptionMsg
+	 * @param bool $checked
+	 * @return string
+	 */
+	private function radio( $id, $name, $value, $labelMsg, $descriptionMsg, $checked ) {
+		$attrs = [
+			'type' => 'radio',
+			'id' => $id,
+			'name' => $name,
+			'value' => $value,
+			'class' => 'cdx-radio__input',
+		];
+		if ( $checked ) {
+			$attrs['checked'] = 'checked';
+		}
+
+		return Html::rawElement(
+			'div',
+			[ 'class' => 'wbimport-option' ],
+			Html::rawElement(
+				'div',
+				[ 'class' => 'cdx-radio' ],
+				Html::rawElement(
+					'div',
+					[ 'class' => 'cdx-radio__wrapper' ],
+					Html::element( 'input', $attrs )
+					. Html::element( 'span', [ 'class' => 'cdx-radio__icon' ] )
+					. Html::element(
+						'label',
+						[ 'class' => 'cdx-radio__label', 'for' => $id ],
+						$this->msg( $labelMsg )->text()
+					)
+				)
+			)
+			. Html::rawElement(
+				'div',
+				[ 'class' => 'cdx-label wbimport-option__description' ],
+				Html::element(
+					'span',
+					[ 'class' => 'cdx-label__description' ],
+					$this->msg( $descriptionMsg )->text()
+				)
 			)
 		);
 	}

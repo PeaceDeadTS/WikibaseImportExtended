@@ -111,6 +111,34 @@ class ImportPlanParser {
 			$row =& $this->row( $rows, $match[1] );
 			$row['action'] = 'recreated';
 			$row['localId'] = $match[2];
+			return;
+		}
+
+		if ( preg_match(
+			'/^(DRY-RUN )?EXTEND (\S+) (' . self::ID . ')(?: "([^"]*)")? local=(' . self::ID . ')'
+			. ' labelsAdded=(\d+) descriptionsAdded=(\d+) descriptionsReplaced=(\d+) aliasesAdded=(\d+)'
+			. ' statements=(\S+) sitelinks=(.*)$/',
+			$message,
+			$match
+		) ) {
+			$row =& $this->row( $rows, $match[3] );
+			$row['type'] = $match[2];
+			$row['label'] = $match[4] ?? '';
+			$row['localId'] = $match[5];
+			$row['labels'] = (int)$match[6];
+			$row['descriptions'] = (int)$match[7] + (int)$match[8];
+			$row['aliases'] = (int)$match[9];
+			$row['action'] = $match[1] !== '' ? 'extend' : 'extended';
+			$row['sitelinks'] = $match[11];
+			if ( $match[10] === 'off' ) {
+				$row['statements'] = '0';
+				return;
+			}
+			if ( preg_match( '/^add:(\d+),merge:(\d+),skip:(\d+)$/', $match[10], $counts ) ) {
+				$row['statementsWritten'] = (int)$counts[1];
+				$row['statementsMerged'] = (int)$counts[2];
+				$row['statementsSkipped'] = (int)$counts[3];
+			}
 		}
 	}
 
@@ -133,6 +161,7 @@ class ImportPlanParser {
 				'statements' => '',
 				'sitelinks' => '',
 				'statementsWritten' => null,
+				'statementsMerged' => null,
 				'statementsSkipped' => null,
 				'localId' => '',
 			];

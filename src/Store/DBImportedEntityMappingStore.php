@@ -89,6 +89,16 @@ class DBImportedEntityMappingStore implements ImportedEntityMappingStore {
 
 	/**
 	 * @param EntityId $originalId
+	 * @param EntityId $localId
+	 */
+	public function stage( EntityId $originalId, EntityId $localId ) {
+		$key = $originalId->getSerialization();
+		$this->overlay[$key] = $localId;
+		$this->resolved[$key] = $localId;
+	}
+
+	/**
+	 * @param EntityId $originalId
 	 * @return EntityId|null
 	 */
 	public function getLocalId( EntityId $originalId ) {

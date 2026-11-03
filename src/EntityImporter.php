@@ -8,11 +8,15 @@ use Wikibase\DataModel\Entity\EntityDocument;
 use Wikibase\DataModel\Entity\EntityId;
 use Wikibase\DataModel\Entity\EntityIdValue;
 use Wikibase\DataModel\Entity\Item;
+use Wikibase\DataModel\Entity\ItemId;
 use Wikibase\DataModel\Entity\Property;
+use Wikibase\DataModel\Entity\PropertyId;
+use Wikibase\DataModel\Services\Lookup\UnresolvedEntityRedirectException;
 use Wikibase\DataModel\SiteLinkList;
 use Wikibase\DataModel\Snak\PropertyValueSnak;
 use Wikibase\DataModel\Statement\StatementList;
 use Wikibase\DataModel\Statement\StatementListProvider;
+use Wikibase\DataModel\Term\Fingerprint;
 use Wikibase\DataModel\Term\FingerprintProvider;
 use Wikibase\Import\Store\ImportedEntityMappingStore;
 use Wikibase\Lib\DataTypeFactory;
@@ -103,6 +107,13 @@ class EntityImporter {
 	 * @var array<string,true>
 	 */
 	private $seenStub = [];
+
+	/**
+	 * Source id of the entity being extended. While set, that id is not created again.
+	 *
+	 * @var string|null
+	 */
+	private $extendRootId = null;
 
 	/**
 	 * @param StatementsImporter $statementsImporter
@@ -238,6 +249,464 @@ class EntityImporter {
 	}
 
 	/**
+	 * Supplement an existing local entity with data from a source id.
+	 * The local id is the one the caller named. The mapping table is not used to pick it.
+	 *
+	 * @param string $sourceSerialization Wikidata (or other source) id.
+	 * @param string $localSerialization Existing local id.
+	 * @param bool $importStatements
+	 * @param bool $replaceDescription
+	 * @param bool $addAliases
+	 */
+	public function extendEntity(
+		$sourceSerialization,
+		$localSerialization,
+		$importStatements,
+		$replaceDescription,
+		$addAliases
+	) {
+		$sourceId = $this->parseEntityId( $sourceSerialization );
+		$localId = $this->parseEntityId( $localSerialization );
+		if ( $sourceId->getEntityType() !== $localId->getEntityType() ) {
+			throw new ImportException( wfMessage( 'wikibaseimport-id-mismatch' )->text() );
+		}
+
+		try {
+			$revision = $this->revisionLookup->getEntityRevision(
+				$localId,
+				0,
+				LookupConstants::LATEST_FROM_MASTER
+			);
+		} catch ( UnresolvedEntityRedirectException $ex ) {
+			throw new ImportException(
+				wfMessage( 'wikibaseimport-local-redirect', $localId->getSerialization() )->text()
+			);
+		}
+		if ( $revision === null ) {
+			throw new ImportException(
+				wfMessage( 'wikibaseimport-local-missing', $localId->getSerialization() )->text()
+			);
+		}
+
+		$found = $this->apiEntityLookup->getEntities( [ $sourceId->getSerialization() ] );
+		$source = $found[$sourceId->getSerialization()] ?? null;
+		if ( !$source instanceof EntityDocument ) {
+			throw new ImportException(
+				wfMessage( 'wikibaseimport-source-missing', $sourceId->getSerialization() )->text()
+			);
+		}
+		if ( $source->getType() !== $revision->getEntity()->getType() ) {
+			throw new ImportException( wfMessage( 'wikibaseimport-id-mismatch' )->text() );
+		}
+
+		if (
+			$source instanceof Property
+			&& $revision->getEntity() instanceof Property
+			&& $source->getDataTypeId() !== $revision->getEntity()->getDataTypeId()
+		) {
+			$this->logger->warning(
+				'Datatype of ' . $localId->getSerialization()
+				. ' differs from ' . $sourceId->getSerialization() . ' and is left unchanged'
+			);
+		}
+
+		$local = $revision->getEntity();
+		$mapped = $this->entityMappingStore->getLocalId( $sourceId );
+		$persisted = $this->entityMappingStore->isPersisted( $sourceId );
+		if ( $persisted && $mapped !== null && !$mapped->equals( $localId ) ) {
+			$this->logger->warning(
+				'Mapping for ' . $sourceId->getSerialization()
+				. ' already points at ' . $mapped->getSerialization()
+				. ' and was left unchanged. This extend updates ' . $localId->getSerialization() . '.'
+			);
+		}
+		// Statement copying resolves the source id to the entity the user named.
+		$this->entityMappingStore->stage( $sourceId, $localId );
+
+		$this->extendRootId = $sourceId->getSerialization();
+		try {
+			$this->applyExtend(
+				$source,
+				$local,
+				$revision->getRevisionId(),
+				(bool)$importStatements,
+				(bool)$replaceDescription,
+				(bool)$addAliases,
+				$persisted
+			);
+		} finally {
+			$this->extendRootId = null;
+		}
+	}
+
+	/**
+	 * @param EntityDocument $source
+	 * @param EntityDocument $local
+	 * @param int $baseRevId
+	 * @param bool $importStatements
+	 * @param bool $replaceDescription
+	 * @param bool $addAliases
+	 * @param bool $mappingPersisted
+	 */
+	private function applyExtend(
+		EntityDocument $source,
+		EntityDocument $local,
+		$baseRevId,
+		$importStatements,
+		$replaceDescription,
+		$addAliases,
+		$mappingPersisted
+	) {
+		$sourceId = $source->getId();
+		$localId = $local->getId();
+		if ( $sourceId === null || $localId === null ) {
+			throw new ImportException( wfMessage( 'wikibaseimport-bad-id' )->text() );
+		}
+
+		$sourceSitelinks = $source instanceof Item ? $source->getSiteLinkList()->count() : 0;
+		$sitelinkBackup = $local instanceof Item ? new SiteLinkList( $local->getSiteLinkList() ) : null;
+
+		if ( $this->importSitelinks && $source instanceof Item ) {
+			$this->importBadgeItems( [ $source ] );
+		}
+
+		$statementsAdded = 0;
+		$statementsMerged = 0;
+		$statementsSkipped = 0;
+		if ( $importStatements && $source instanceof StatementListProvider ) {
+			$referenced = $this->withoutExtendRoot( $this->getReferencedEntities( $source ) );
+			if ( $referenced !== [] ) {
+				$this->importEntities( $referenced, false );
+			}
+			if ( $local instanceof StatementListProvider ) {
+				$counts = $this->statementsImporter->mergeOnto( $source, $local );
+				$statementsAdded = $counts['added'];
+				$statementsMerged = $counts['merged'];
+				$statementsSkipped = $counts['skipped'];
+			}
+		}
+
+		$labelsAdded = 0;
+		$descriptionsAdded = 0;
+		$descriptionsReplaced = 0;
+		$aliasesAdded = 0;
+		if ( $source instanceof FingerprintProvider && $local instanceof FingerprintProvider ) {
+			$termCounts = $this->mergeTerms(
+				$local->getFingerprint(),
+				$source->getFingerprint(),
+				$replaceDescription,
+				$addAliases
+			);
+			$labelsAdded = $termCounts['labelsAdded'];
+			$descriptionsAdded = $termCounts['descriptionsAdded'];
+			$descriptionsReplaced = $termCounts['descriptionsReplaced'];
+			$aliasesAdded = $termCounts['aliasesAdded'];
+		}
+
+		$sitelinksAdded = 0;
+		if ( $this->importSitelinks && $source instanceof Item && $local instanceof Item ) {
+			$sitelinksAdded = $this->mergeSitelinks( $local, $source );
+		}
+
+		$changed = $labelsAdded + $descriptionsAdded + $descriptionsReplaced
+			+ $aliasesAdded + $statementsAdded + $statementsMerged + $sitelinksAdded > 0;
+		$statementsToken = $importStatements
+			? sprintf( 'add:%d,merge:%d,skip:%d', $statementsAdded, $statementsMerged, $statementsSkipped )
+			: 'off';
+		$sitelinksToken = $this->importSitelinks
+			? (string)$sitelinksAdded
+			: '0 (dropped ' . $sourceSitelinks . ')';
+
+		if ( $this->dryRun ) {
+			$this->logger->info( 'DRY-RUN ' . $this->extendLine(
+				$source,
+				$local,
+				$labelsAdded,
+				$descriptionsAdded,
+				$descriptionsReplaced,
+				$aliasesAdded,
+				$statementsToken,
+				$sitelinksToken
+			) );
+			return;
+		}
+
+		if ( $this->importUser === null ) {
+			throw new \RuntimeException( 'Import user is required when dry-run is off' );
+		}
+
+		if ( $changed ) {
+			$summary = 'Extend ' . $localId->getSerialization() . ' from ' . $sourceId->getSerialization();
+			try {
+				$this->entityStore->saveEntity(
+					$local,
+					$summary,
+					$this->importUser,
+					EDIT_UPDATE | $this->botFlag,
+					$baseRevId
+				);
+			} catch ( \Throwable $ex ) {
+				if ( !( $local instanceof Item ) || $sitelinksAdded === 0 || $sitelinkBackup === null ) {
+					$this->logger->error(
+						'Failed to extend ' . $localId->getSerialization() . ': ' . $ex->getMessage()
+					);
+					return;
+				}
+
+				$this->logger->warning(
+					'Saving sitelinks onto ' . $localId->getSerialization()
+					. ' failed (' . $ex->getMessage() . '). Retrying without new sitelinks.'
+				);
+				$local->setSiteLinkList( $sitelinkBackup );
+				$sitelinksToken = '0 (dropped ' . $sourceSitelinks . ')';
+				try {
+					$this->entityStore->saveEntity(
+						$local,
+						$summary,
+						$this->importUser,
+						EDIT_UPDATE | $this->botFlag,
+						$baseRevId
+					);
+				} catch ( \Throwable $retryEx ) {
+					$this->logger->error(
+						'Failed to extend ' . $localId->getSerialization() . ': ' . $retryEx->getMessage()
+					);
+					return;
+				}
+			}
+		}
+
+		if ( !$mappingPersisted ) {
+			try {
+				$this->entityMappingStore->add( $sourceId, $localId );
+			} catch ( \Throwable $ex ) {
+				$this->logger->warning(
+					'Could not store mapping for ' . $sourceId->getSerialization() . ': ' . $ex->getMessage()
+				);
+			}
+		}
+
+		$this->logger->info( $this->extendLine(
+			$source,
+			$local,
+			$labelsAdded,
+			$descriptionsAdded,
+			$descriptionsReplaced,
+			$aliasesAdded,
+			$statementsToken,
+			$sitelinksToken
+		) );
+	}
+
+	/**
+	 * @param string $serialization
+	 * @return EntityId
+	 */
+	private function parseEntityId( $serialization ) {
+		$serialization = strtoupper( trim( (string)$serialization ) );
+		try {
+			if ( preg_match( '/^Q\d+$/', $serialization ) ) {
+				return new ItemId( $serialization );
+			}
+			if ( preg_match( '/^P\d+$/', $serialization ) ) {
+				return new PropertyId( $serialization );
+			}
+		} catch ( \Throwable $ex ) {
+			throw new ImportException( wfMessage( 'wikibaseimport-bad-id' )->text() );
+		}
+
+		throw new ImportException( wfMessage( 'wikibaseimport-bad-id' )->text() );
+	}
+
+	/**
+	 * Labels are filled in only for languages the local entity does not have.
+	 * Descriptions are per language: missing ones are added, existing ones are
+	 * replaced only when requested, and languages absent from the source stay.
+	 * Aliases are appended by exact string match and are never deleted.
+	 *
+	 * @param Fingerprint $local
+	 * @param Fingerprint $source
+	 * @param bool $replaceDescription
+	 * @param bool $addAliases
+	 * @return array{labelsAdded:int,descriptionsAdded:int,descriptionsReplaced:int,aliasesAdded:int}
+	 */
+	private function mergeTerms( Fingerprint $local, Fingerprint $source, $replaceDescription, $addAliases ) {
+		$labelsAdded = 0;
+		foreach ( $source->getLabels() as $term ) {
+			$language = $term->getLanguageCode();
+			if ( $local->hasLabel( $language ) ) {
+				continue;
+			}
+			$text = trim( $term->getText() );
+			if ( !$this->termSanitizer->acceptTerm( $language, $text ) ) {
+				continue;
+			}
+			// Wikibase rejects a label equal to the description in the same language.
+			if ( $local->hasDescription( $language ) && $local->getDescription( $language )->getText() === $text ) {
+				continue;
+			}
+			$local->setLabel( $language, $text );
+			$labelsAdded++;
+		}
+
+		$descriptionsAdded = 0;
+		$descriptionsReplaced = 0;
+		foreach ( $source->getDescriptions() as $term ) {
+			$language = $term->getLanguageCode();
+			$text = trim( $term->getText() );
+			if ( !$this->termSanitizer->acceptTerm( $language, $text ) ) {
+				continue;
+			}
+			if ( $local->hasLabel( $language ) && $local->getLabel( $language )->getText() === $text ) {
+				continue;
+			}
+			$has = $local->hasDescription( $language );
+			if ( $has && !$replaceDescription ) {
+				continue;
+			}
+			if ( $has && $local->getDescription( $language )->getText() === $text ) {
+				continue;
+			}
+			$local->setDescription( $language, $text );
+			if ( $has ) {
+				$descriptionsReplaced++;
+			} else {
+				$descriptionsAdded++;
+			}
+		}
+
+		$aliasesAdded = 0;
+		if ( $addAliases ) {
+			foreach ( $source->getAliasGroups() as $group ) {
+				$language = $group->getLanguageCode();
+				$existing = $local->hasAliasGroup( $language )
+					? $local->getAliasGroup( $language )->getAliases()
+					: [];
+				$label = $local->hasLabel( $language ) ? $local->getLabel( $language )->getText() : '';
+				$merged = $existing;
+				foreach ( $group->getAliases() as $alias ) {
+					if ( !$this->termSanitizer->acceptTerm( $language, $alias ) ) {
+						continue;
+					}
+					if ( $label !== '' && $alias === $label ) {
+						continue;
+					}
+					$merged[] = $alias;
+				}
+				if ( $merged === [] ) {
+					continue;
+				}
+				$local->setAliasGroup( $language, $merged );
+				$stored = $local->getAliasGroup( $language )->getAliases();
+				if ( $label !== '' ) {
+					$kept = [];
+					foreach ( $stored as $alias ) {
+						// Drop a newly trimmed alias that collides with the label.
+						// Aliases that were already stored are left in place.
+						if ( $alias === $label && !in_array( $alias, $existing, true ) ) {
+							continue;
+						}
+						$kept[] = $alias;
+					}
+					if ( $kept !== $stored ) {
+						if ( $kept === [] ) {
+							$local->removeAliasGroup( $language );
+							continue;
+						}
+						$local->setAliasGroup( $language, $kept );
+						$stored = $kept;
+					}
+				}
+				$aliasesAdded += max( 0, count( $stored ) - count( $existing ) );
+			}
+		}
+
+		return [
+			'labelsAdded' => $labelsAdded,
+			'descriptionsAdded' => $descriptionsAdded,
+			'descriptionsReplaced' => $descriptionsReplaced,
+			'aliasesAdded' => $aliasesAdded,
+		];
+	}
+
+	/**
+	 * Add sitelinks whose site id is not already on the local item.
+	 *
+	 * @param Item $local
+	 * @param Item $source
+	 * @return int
+	 */
+	private function mergeSitelinks( Item $local, Item $source ) {
+		$added = 0;
+		$sourceLinks = $this->badgeItemUpdater->replaceBadges( $source->getSiteLinkList() );
+		foreach ( $sourceLinks as $siteLink ) {
+			if ( $local->getSiteLinkList()->hasLinkWithSiteId( $siteLink->getSiteId() ) ) {
+				continue;
+			}
+			$local->getSiteLinkList()->addSiteLink( $siteLink );
+			$added++;
+		}
+
+		return $added;
+	}
+
+	/**
+	 * @param EntityDocument $source
+	 * @param EntityDocument $local
+	 * @param int $labelsAdded
+	 * @param int $descriptionsAdded
+	 * @param int $descriptionsReplaced
+	 * @param int $aliasesAdded
+	 * @param string $statementsToken
+	 * @param string $sitelinksToken
+	 * @return string
+	 */
+	private function extendLine(
+		EntityDocument $source,
+		EntityDocument $local,
+		$labelsAdded,
+		$descriptionsAdded,
+		$descriptionsReplaced,
+		$aliasesAdded,
+		$statementsToken,
+		$sitelinksToken
+	) {
+		$sourceId = $source->getId();
+		$localId = $local->getId();
+		$label = str_replace( '"', '', $this->pickLabel( $local ) );
+		$quoted = $label === '' ? '' : ' "' . $label . '"';
+
+		return sprintf(
+			'EXTEND %s %s%s local=%s labelsAdded=%d descriptionsAdded=%d descriptionsReplaced=%d aliasesAdded=%d statements=%s sitelinks=%s',
+			$source->getType(),
+			$sourceId ? $sourceId->getSerialization() : '',
+			$quoted,
+			$localId ? $localId->getSerialization() : '',
+			$labelsAdded,
+			$descriptionsAdded,
+			$descriptionsReplaced,
+			$aliasesAdded,
+			$statementsToken,
+			$sitelinksToken
+		);
+	}
+
+	/**
+	 * @param string[] $ids
+	 * @return string[]
+	 */
+	private function withoutExtendRoot( array $ids ) {
+		if ( $this->extendRootId === null ) {
+			return $ids;
+		}
+		$root = $this->extendRootId;
+
+		return array_values( array_filter( $ids, static function ( $id ) use ( $root ) {
+			return (string)$id !== $root;
+		} ) );
+	}
+
+	/**
 	 * @param EntityDocument $entity
 	 * @param bool $importStatements
 	 */
@@ -249,6 +718,10 @@ class EntityImporter {
 		}
 
 		$serialization = $sourceId->getSerialization();
+		if ( $this->extendRootId !== null && $serialization === $this->extendRootId ) {
+			// The user named the local id. Do not create a second entity for this source.
+			return;
+		}
 		$existing = $this->entityMappingStore->getLocalId( $sourceId );
 		$recreateId = null;
 		if ( $existing !== null && $this->entityMappingStore->isPersisted( $sourceId ) ) {
@@ -451,7 +924,7 @@ class EntityImporter {
 		}
 
 		if ( $badgeItems !== [] ) {
-			$this->importEntities( $badgeItems, false );
+			$this->importEntities( $this->withoutExtendRoot( $badgeItems ), false );
 		}
 	}
 
