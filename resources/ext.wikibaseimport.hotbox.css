@@ -1,0 +1,168 @@
+.wbimport-hotbox {
+	box-sizing: border-box;
+	max-width: 34rem;
+	margin: 0.25rem 0 0.85rem;
+	border: 1px solid var(--border-color-subtle, #c8ccd1);
+	border-radius: 4px;
+	background-color: var(--background-color-neutral-subtle, #f8f9fa);
+	color: var(--color-base, #202122);
+	transition: border-color 220ms ease, background-color 220ms ease;
+}
+
+.wbimport-hotbox--open {
+	border-color: var(--border-color-progressive--hover, #447ff5);
+	background-color: var(--background-color-base, #fff);
+}
+
+.wbimport-hotbox__toggle {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	width: 100%;
+	margin: 0;
+	padding: 0.4rem 0.7rem;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 0.875rem;
+	line-height: 1.35;
+	text-align: start;
+	cursor: pointer;
+	border-radius: 4px;
+}
+
+.wbimport-hotbox__toggle:hover {
+	background-color: var(--background-color-interactive, rgba(0, 0, 0, 0.04));
+}
+
+.wbimport-hotbox__toggle:focus-visible {
+	outline: 2px solid var(--border-color-progressive, #36c);
+	outline-offset: -2px;
+}
+
+.wbimport-hotbox__title {
+	font-weight: 600;
+}
+
+.wbimport-hotbox__id {
+	margin-inline-start: auto;
+	color: var(--color-subtle, #54595d);
+	font-family: monospace;
+	font-size: 0.8125rem;
+}
+
+.wbimport-hotbox__chevron {
+	flex: 0 0 auto;
+	width: 0.4rem;
+	height: 0.4rem;
+	margin-top: -0.05rem;
+	border-right: 2px solid currentColor;
+	border-bottom: 2px solid currentColor;
+	transform: rotate(-45deg);
+	transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.wbimport-hotbox--open .wbimport-hotbox__chevron {
+	margin-top: 0.12rem;
+	transform: rotate(45deg);
+}
+
+.wbimport-hotbox__clip {
+	display: grid;
+	grid-template-rows: 0fr;
+	transition: grid-template-rows 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.wbimport-hotbox--open .wbimport-hotbox__clip {
+	grid-template-rows: 1fr;
+}
+
+.wbimport-hotbox__panel {
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.wbimport-hotbox__body {
+	min-width: 0;
+	margin: 0;
+	padding: 0 0.7rem 0.7rem;
+	border: 0;
+	opacity: 0;
+	transform: translateY(-6px);
+	transition: opacity 180ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.wbimport-hotbox--open .wbimport-hotbox__body {
+	opacity: 1;
+	transform: none;
+}
+
+.wbimport-hotbox__source {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.wbimport-hotbox__source-label {
+	font-size: 0.875rem;
+}
+
+.wbimport-hotbox__input {
+	flex: 1 1 8rem;
+	min-width: 7.5rem;
+	max-width: 11rem;
+}
+
+.wbimport-hotbox__options {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 1rem;
+	margin-top: 0.65rem;
+}
+
+.wbimport-hotbox__options .cdx-checkbox {
+	margin: 0;
+}
+
+.wbimport-hotbox__hint {
+	margin: 0.55rem 0 0;
+	color: var(--color-subtle, #54595d);
+	font-size: 0.8125rem;
+	line-height: 1.4;
+}
+
+.wbimport-hotbox__pending {
+	margin-top: 0.65rem;
+}
+
+.wbimport-hotbox__pending-text {
+	margin: 0 0 0.35rem;
+	font-size: 0.875rem;
+}
+
+.wbimport-hotbox__result {
+	margin-top: 0.65rem;
+	overflow-wrap: anywhere;
+}
+
+.wbimport-hotbox__result:empty,
+.wbimport-hotbox .cdx-button[hidden],
+.wbimport-hotbox__pending[hidden] {
+	display: none;
+}
+
+.wbimport-hotbox .cdx-message {
+	margin: 0;
+}
+
+@media ( prefers-reduced-motion: reduce ) {
+	.wbimport-hotbox,
+	.wbimport-hotbox__clip,
+	.wbimport-hotbox__chevron,
+	.wbimport-hotbox__body {
+		transition: none;
+	}
+}

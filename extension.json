@@ -1,6 +1,6 @@
 {
 	"name": "WikibaseImportExtended",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"author": [
 		"Katie Filbert",
 		"PeaceDeadTS"
@@ -31,7 +31,9 @@
 	},
 	"Hooks": {
 		"LoadExtensionSchemaUpdates": "Wikibase\\Import\\Hooks::onLoadExtensionSchemaUpdates",
-		"SidebarBeforeOutput": "Wikibase\\Import\\Hooks::onSidebarBeforeOutput"
+		"SidebarBeforeOutput": "Wikibase\\Import\\Hooks::onSidebarBeforeOutput",
+		"BeforePageDisplay": "Wikibase\\Import\\EntityExtendHotbox::onBeforePageDisplay",
+		"OutputPageBeforeHTML": "Wikibase\\Import\\EntityExtendHotbox::onOutputPageBeforeHTML"
 	},
 	"ResourceFileModulePaths": {
 		"localBasePath": "resources",
@@ -100,6 +102,39 @@
 				"wikibaseimport-extend-mismatch",
 				"wikibaseimport-empty-entity",
 				"wikibaseimport-empty-local",
+				"wikibaseimport-bad-id",
+				"wikibaseimport-id-mismatch",
+				"wikibaseimport-request-failed",
+				"wikibaseimport-stale",
+				"wikibaseimport-pending-check",
+				"wikibaseimport-pending-import"
+			]
+		},
+		"ext.wikibaseimport.hotbox.styles": {
+			"styles": [
+				"ext.wikibaseimport.hotbox.css"
+			]
+		},
+		"ext.wikibaseimport.hotbox": {
+			"scripts": [
+				"ext.wikibaseimport.hotbox.js"
+			],
+			"dependencies": [
+				"mediawiki.api"
+			],
+			"messages": [
+				"wikibaseimport-hotbox-check-ok",
+				"wikibaseimport-hotbox-import-ok",
+				"wikibaseimport-hotbox-labels",
+				"wikibaseimport-hotbox-descriptions",
+				"wikibaseimport-hotbox-replaced",
+				"wikibaseimport-hotbox-aliases",
+				"wikibaseimport-hotbox-delta-none",
+				"wikibaseimport-hotbox-warnings",
+				"wikibaseimport-extend-mismatch",
+				"wikibaseimport-check-error",
+				"wikibaseimport-import-error",
+				"wikibaseimport-empty-entity",
 				"wikibaseimport-bad-id",
 				"wikibaseimport-id-mismatch",
 				"wikibaseimport-request-failed",
